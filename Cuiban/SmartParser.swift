@@ -158,7 +158,7 @@ enum SmartParser {
         r.sourceLabel = "文字"
         if r.rawLines.isEmpty {
             r.errorText = "这里没读到内容"
-        } else if r.dueDate == nil, (r.repeatMode ?? .none) == .none {
+        } else if r.dueDate == nil, (r.repeatMode ?? RepeatMode.none) == RepeatMode.none {
             r.tips.append("这句话里没找到时间或重复的说法，可以写「明天下午 3 点」这种")
         }
         DispatchQueue.main.async { completion(r) }

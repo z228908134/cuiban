@@ -287,7 +287,7 @@ struct AddTaskView: View {
                                     }
 
                                 Button {
-                                    withAnimation { photos.remove(at: idx) }
+                                    removePhoto(at: idx)
                                 } label: {
                                     Image(systemName: "xmark.circle.fill")
                                         .font(.system(size: 19))
@@ -335,7 +335,7 @@ struct AddTaskView: View {
                         .font(.system(size: 13))
                     Button("清除全部图片") {
                         withAnimation {
-                            photos.removeAll()
+                            photos = []
                             parseSummary = nil
                             tipsShown = []
                             aiError = nil
@@ -420,6 +420,16 @@ struct AddTaskView: View {
     private func handlePicked(_ img: UIImage) {
         photos.append(PhotoSlot(image: img))
         runOCR()
+    }
+
+    /// 单独抽出来，并改用 id 过滤，避免 `remove(at:)` 在 Array 与
+    /// RangeReplaceableCollection 两个重载之间产生类型推断歧义
+    private func removePhoto(at index: Int) {
+        guard photos.indices.contains(index) else { return }
+        let doomed = photos[index].id
+        withAnimation {
+            photos = photos.filter { $0.id != doomed }
+        }
     }
 
     private func runOCR() {

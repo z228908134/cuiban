@@ -233,7 +233,7 @@ enum AIService {
             if r.dueDate == nil { r.tips.append("AI 给的时间「\(due)」没读懂，请手动确认") }
         }
         if let rep = dict["repeat"] as? String {
-            r.repeatMode = RepeatMode(rawValue: rep.trimmingCharacters(in: .whitespaces).lowercased()) ?? .none
+            r.repeatMode = RepeatMode(rawValue: rep.trimmingCharacters(in: .whitespaces).lowercased()) ?? RepeatMode.none
         }
         if let wds = dict["weekdays"] as? [String] {
             var out: [Int] = []
