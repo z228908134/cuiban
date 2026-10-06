@@ -92,7 +92,7 @@ struct AddTaskView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("保存") { save() }
-                        .fontWeight(.semibold)
+                        .font(.system(size: 17, weight: .semibold))
                         .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
@@ -156,7 +156,7 @@ struct AddTaskView: View {
         var c = DateComponents()
         c.hour = hour
         c.minute = 0
-        if let d = cal.nextDate(after: Date(), matching: c, matches: true) {
+        if let d = cal.nextDate(after: Date(), matching: c, matchingPolicy: .nextTime) {
             return d.timeIntervalSinceNow
         }
         return 3600
@@ -167,7 +167,7 @@ struct AddTaskView: View {
         var c = DateComponents()
         c.hour = 9
         c.minute = 0
-        if let d = cal.nextDate(after: Date(), matching: c, matches: true) {
+        if let d = cal.nextDate(after: Date(), matching: c, matchingPolicy: .nextTime) {
             return d.timeIntervalSinceNow
         }
         return 3600
