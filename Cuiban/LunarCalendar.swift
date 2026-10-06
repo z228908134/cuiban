@@ -194,6 +194,10 @@ enum LunarCalendar {
     private static let restSet: Set<Int> = expand(holidayRanges)
     private static let workSet: Set<Int> = expand(workdayRanges)
 
+    // 供 HolidayService 兜底查询使用
+    static let restSetInternal: Set<Int> = restSet
+    static let workSetInternal: Set<Int> = workSet
+
     private static func expand(_ ranges: [(Int, Int, Int, Int, Int)]) -> Set<Int> {
         let cal = Calendar(identifier: .gregorian)
         var s = Set<Int>()
@@ -239,8 +243,8 @@ final class HolidayService: ObservableObject {
             if d.rest.contains(key) { return "休" }
             return nil
         }
-        if LunarCalendar.workSet.contains(key) { return "班" }
-        if LunarCalendar.restSet.contains(key) { return "休" }
+        if LunarCalendar.workSetInternal.contains(key) { return "班" }
+        if LunarCalendar.restSetInternal.contains(key) { return "休" }
         return nil
     }
 

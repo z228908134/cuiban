@@ -120,7 +120,7 @@ final class TemplateStore: ObservableObject {
            let list = try? JSONDecoder().decode([NoteTemplate].self, from: data) {
             templates = list
         } else {
-            templates = NoteTemplate.builtin
+            templates = TemplateStore.builtin
             save()
         }
     }
