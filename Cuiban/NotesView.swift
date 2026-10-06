@@ -406,6 +406,13 @@ struct NoteBodyEditor: UIViewRepresentable {
                 binding.wrappedValue = t
             }
         }
+        // 点勾选框直接打勾 / 取消（微信备忘录式交互）
+        let tap = UITapGestureRecognizer(
+            target: context.coordinator,
+            action: #selector(Coordinator.handleTap(_:))
+        )
+        tap.cancelsTouchesInView = false
+        tv.addGestureRecognizer(tap)
         restyle(tv)
         return tv
     }
@@ -472,13 +479,64 @@ struct NoteBodyEditor: UIViewRepresentable {
         tv.selectedRange = sel
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
         var parent: NoteBodyEditor
         init(_ p: NoteBodyEditor) { parent = p }
 
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
             parent.restyle(tv)
+        }
+
+        // MARK: 点勾选框打勾
+
+        /// 只有点击落在勾选框标记上时才接管这次点击，其余照常编辑
+        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
+            guard let tap = g as? UITapGestureRecognizer,
+                  let tv = parent.bridge.textView else { return true }
+            return Self.tapHitsCheckbox(tap: tap, tv: tv)
+        }
+
+        private static func tapHitsCheckbox(tap: UITapGestureRecognizer, tv: UITextView) -> Bool {
+            let ns = tv.text as NSString
+            guard ns.length > 0 else { return false }
+            let p = tap.location(in: tv)
+            let idx = tv.layoutManager.characterIndex(
+                for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
+            )
+            guard idx >= 0, idx < ns.length else { return false }
+            let lr = ns.lineRange(for: NSRange(location: idx, length: 0))
+            let line = ns.substring(with: lr)
+            let mark = TextEditBridge.markerPrefix(in: line, checked: true)
+                ?? TextEditBridge.markerPrefix(in: line, checked: false)
+            guard let mark = mark else { return false }
+            let rel = idx - lr.location
+            return rel >= 0 && rel < (mark as NSString).length
+        }
+
+        @objc func handleTap(_ g: UITapGestureRecognizer) {
+            guard let tv = parent.bridge.textView else { return }
+            let ns = tv.text as NSString
+            guard ns.length > 0 else { return }
+            let p = g.location(in: tv)
+            let idx = tv.layoutManager.characterIndex(
+                for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
+            )
+            guard idx >= 0, idx < ns.length else { return }
+            let lr = ns.lineRange(for: NSRange(location: idx, length: 0))
+            let line = ns.substring(with: lr)
+            var newLine: String? = nil
+            if let u = TextEditBridge.markerPrefix(in: line, checked: false) {
+                newLine = TextEditBridge.checkedMark + String(line.dropFirst(u.count))
+            } else if let c = TextEditBridge.markerPrefix(in: line, checked: true) {
+                newLine = TextEditBridge.uncheckedMark + String(line.dropFirst(c.count))
+            }
+            guard let nl = newLine else { return }
+            tv.text = ns.replacingCharacters(in: lr, with: nl)
+            parent.restyle(tv)
+            if parent.text.wrappedValue != tv.text {
+                parent.text.wrappedValue = tv.text
+            }
         }
     }
 }
