@@ -9,6 +9,7 @@ struct AlarmOverlay: View {
     @State private var now = Date()
     @State private var muted = false
     @State private var pulsing = false
+    @State private var previewOpen = false
 
     private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
@@ -43,11 +44,17 @@ struct AlarmOverlay: View {
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.top, 12)
 
+                if !task.photos.isEmpty {
+                    PhotoStrip(names: task.photos, size: 76, maxCount: 3, radius: 12)
+                        .padding(.top, 14)
+                        .onTapGesture { previewOpen = true }
+                }
+
                 if !task.note.isEmpty {
                     Text(task.note)
                         .font(.system(size: 13))
                         .foregroundColor(.white.opacity(0.7))
-                        .padding(.top, 6)
+                        .padding(.top, 10)
                         .multilineTextAlignment(.center)
                         .lineLimit(5)
                 }
@@ -89,6 +96,12 @@ struct AlarmOverlay: View {
             .padding(.bottom, 24)
         }
         .onReceive(timer) { now = $0 }
+        .fullScreenCover(isPresented: $previewOpen) {
+            PhotoViewer(
+                images: AttachmentStore.loadAll(task.photos),
+                titles: task.photos.indices.map { "第 \($0 + 1) 张，共 \(task.photos.count) 张" }
+            )
+        }
         .onAppear {
             pulsing = true
             if store.settings.soundEnabled && !muted {

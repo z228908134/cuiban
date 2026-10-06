@@ -62,6 +62,7 @@ struct RootView: View {
             store.refreshAuth()
             NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
         }
+        .preferredColorScheme(store.settings.theme.colorScheme)
     }
 }
 

@@ -32,6 +32,8 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var repeatMode: RepeatMode = .none
     /// 每周重复时具体是哪几天（Calendar 口径：1=周日 ... 7=周六），空表示「每周同一天」
     var weekdays: [Int] = []
+    /// 附在任务上的照片（存在沙盒 attachments/ 里的文件名）
+    var photos: [String] = []
     var isDone: Bool = false
     var doneAt: Date? = nil
     var createdAt: Date = Date()
@@ -110,7 +112,7 @@ struct TaskItem: Identifiable, Codable, Equatable {
 // 容错解码：老版本存下来的 JSON 缺少新加的字段也不会导致整个列表读不出来
 extension TaskItem {
     enum CodingKeys: String, CodingKey {
-        case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays,
+        case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays, photos,
              isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil
     }
 
@@ -124,12 +126,46 @@ extension TaskItem {
         intervalMinutes = try c.decodeIfPresent(Int.self, forKey: .intervalMinutes) ?? d.intervalMinutes
         repeatMode = try c.decodeIfPresent(RepeatMode.self, forKey: .repeatMode) ?? d.repeatMode
         weekdays = try c.decodeIfPresent([Int].self, forKey: .weekdays) ?? d.weekdays
+        photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? d.photos
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? d.isDone
         doneAt = try c.decodeIfPresent(Date.self, forKey: .doneAt)
         createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? d.createdAt
         nagCount = try c.decodeIfPresent(Int.self, forKey: .nagCount) ?? d.nagCount
         lastNagAt = try c.decodeIfPresent(Date.self, forKey: .lastNagAt)
         snoozeUntil = try c.decodeIfPresent(Date.self, forKey: .snoozeUntil)
+    }
+}
+
+// MARK: - 外观
+
+enum ThemeMode: String, Codable, CaseIterable, Identifiable {
+    case system, light, dark
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    var shortLabel: String {
+        switch self {
+        case .system: return "自动"
+        case .light: return "浅色"
+        case .dark: return "深色"
+        }
+    }
+
+    /// nil 表示交给系统
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
     }
 }
 
@@ -141,6 +177,25 @@ struct AppSettings: Codable, Equatable {
     var soundEnabled: Bool = true
     /// 后台常驻：让 App 留在后台按秒计时，实现真正「一直催」
     var keepAlive: Bool = true
+    /// 外观：跟随系统 / 浅色 / 深色
+    var theme: ThemeMode = .system
+
+    init() {}
+
+    // 容错解码：以后再加设置项，老版本存的设置也不会被清空
+    enum CodingKeys: String, CodingKey {
+        case defaultIntervalMinutes, snoozeMinutes, soundEnabled, keepAlive, theme
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = AppSettings()
+        defaultIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .defaultIntervalMinutes) ?? d.defaultIntervalMinutes
+        snoozeMinutes = try c.decodeIfPresent(Int.self, forKey: .snoozeMinutes) ?? d.snoozeMinutes
+        soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? d.soundEnabled
+        keepAlive = try c.decodeIfPresent(Bool.self, forKey: .keepAlive) ?? d.keepAlive
+        theme = try c.decodeIfPresent(ThemeMode.self, forKey: .theme) ?? d.theme
+    }
 }
 
 // MARK: - 数据仓库
@@ -233,6 +288,9 @@ final class TaskStore: ObservableObject {
     }
 
     func delete(id: String) {
+        if let i = index(of: id) {
+            AttachmentStore.delete(tasks[i].photos)
+        }
         tasks.removeAll { $0.id == id }
         save()
         AlarmCenter.shared.dismiss()
@@ -351,15 +409,29 @@ final class TaskStore: ObservableObject {
     }
 
     func clearFinished() {
+        let gone = tasks.filter { $0.isDone }.flatMap { $0.photos }
+        AttachmentStore.delete(gone)
         tasks.removeAll { $0.isDone }
         save()
     }
 
     func clearAll() {
+        AttachmentStore.delete(tasks.flatMap { $0.photos })
         tasks.removeAll()
         save()
         AlarmCenter.shared.dismiss()
         NotificationScheduler.rescheduleAll(tasks: [], settings: settings, catchUp: true)
+    }
+
+    /// 所有任务正在引用的照片文件名
+    var usedPhotoNames: Set<String> {
+        Set(tasks.flatMap { $0.photos })
+    }
+
+    /// 清理没有任何任务引用的照片，返回清理数量
+    @discardableResult
+    func vacuumPhotos() -> Int {
+        AttachmentStore.vacuum(keeping: usedPhotoNames)
     }
 }
 

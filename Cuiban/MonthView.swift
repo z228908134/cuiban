@@ -217,6 +217,11 @@ struct MonthView: View {
                 }
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
+
+                if !e.task.photos.isEmpty {
+                    PhotoStrip(names: e.task.photos, size: 34, maxCount: 4)
+                        .padding(.top, 4)
+                }
             }
 
             Spacer(minLength: 4)

@@ -82,42 +82,33 @@ enum SmartParser {
 
     // MARK: OCR
 
+    /// 单张图（保留旧入口）
     static func recognize(image: UIImage, completion: @escaping (SmartParseResult) -> Void) {
-        guard let cg = image.cgImage else {
+        recognize(images: [image], completion: completion)
+    }
+
+    /// 多张图：把每张的文字合起来一起解析，信息越全越准
+    static func recognize(images: [UIImage], completion: @escaping (SmartParseResult) -> Void) {
+        guard !images.isEmpty else {
             var r = SmartParseResult()
-            r.errorText = "这张图片读取不了，换一张试试"
+            r.sourceLabel = "图片"
+            r.errorText = "还没有选图片"
             DispatchQueue.main.async { completion(r) }
             return
         }
-        let orientation = CGImagePropertyOrientation(image.imageOrientation)
 
         DispatchQueue.global(qos: .userInitiated).async {
             var lines: [String] = []
             var failure: String? = nil
 
-            let req = VNRecognizeTextRequest()
-            req.recognitionLevel = .accurate
-            req.usesLanguageCorrection = true
-            req.recognitionLanguages = ["zh-Hans", "en-US"]
-            if #available(iOS 16.0, *) { req.automaticallyDetectsLanguage = true }
-
-            do {
-                try VNImageRequestHandler(cgImage: cg, orientation: orientation, options: [:]).perform([req])
-                lines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-            } catch {
-                // 兜底：不指定识别语言再试一次
-                let retry = VNRecognizeTextRequest()
-                retry.recognitionLevel = .accurate
-                retry.usesLanguageCorrection = true
-                do {
-                    try VNImageRequestHandler(cgImage: cg, orientation: orientation, options: [:]).perform([retry])
-                    lines = (retry.results ?? []).compactMap { $0.topCandidates(1).first?.string }
-                } catch {
-                    failure = "识别失败：\(error.localizedDescription)"
-                }
+            for img in images {
+                let one = ocrLines(img)
+                lines.append(contentsOf: one.lines)
+                if let e = one.error, failure == nil { failure = e }
             }
 
             var out = parse(lines: lines)
+            out.sourceLabel = "图片"
             if let f = failure {
                 out.errorText = f
             } else if out.rawLines.isEmpty {
@@ -125,6 +116,52 @@ enum SmartParser {
             }
             DispatchQueue.main.async { completion(out) }
         }
+    }
+
+    private static func ocrLines(_ image: UIImage) -> (lines: [String], error: String?) {
+        guard let cg = image.cgImage else {
+            return ([], "有张图片读取不了，换一张试试")
+        }
+        let orientation = CGImagePropertyOrientation(image.imageOrientation)
+
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        req.usesLanguageCorrection = true
+        req.recognitionLanguages = ["zh-Hans", "en-US"]
+        if #available(iOS 16.0, *) { req.automaticallyDetectsLanguage = true }
+
+        do {
+            try VNImageRequestHandler(cgImage: cg, orientation: orientation, options: [:]).perform([req])
+            return ((req.results ?? []).compactMap { $0.topCandidates(1).first?.string }, nil)
+        } catch {
+            // 兜底：不指定识别语言再试一次
+            let retry = VNRecognizeTextRequest()
+            retry.recognitionLevel = .accurate
+            retry.usesLanguageCorrection = true
+            do {
+                try VNImageRequestHandler(cgImage: cg, orientation: orientation, options: [:]).perform([retry])
+                return ((retry.results ?? []).compactMap { $0.topCandidates(1).first?.string }, nil)
+            } catch {
+                return ([], "识别失败：\(error.localizedDescription)")
+            }
+        }
+    }
+
+    // MARK: 文字识别（不联网，纯本机）
+
+    static func recognize(text: String, now: Date = Date(),
+                          completion: @escaping (SmartParseResult) -> Void) {
+        let lines = text
+            .components(separatedBy: CharacterSet.newlines)
+            .flatMap { $0.components(separatedBy: "。") }
+        var r = parse(lines: lines, now: now)
+        r.sourceLabel = "文字"
+        if r.rawLines.isEmpty {
+            r.errorText = "这里没读到内容"
+        } else if r.dueDate == nil, (r.repeatMode ?? .none) == .none {
+            r.tips.append("这句话里没找到时间或重复的说法，可以写「明天下午 3 点」这种")
+        }
+        DispatchQueue.main.async { completion(r) }
     }
 
     // MARK: 文本解析
@@ -299,11 +336,47 @@ enum SmartParser {
 
         r.repeatMode = mode
         r.weekdays = weekdays.sorted { (($0 + 5) % 7) < (($1 + 5) % 7) }
-
-        if let t = r.rawLines.first(where: { $0.count >= 2 && $0.count <= 24 && !$0.contains("图片识别") }) {
-            r.titleSuggestion = t
-        }
+        r.titleSuggestion = suggestTitle(flat: flat, rawLines: r.rawLines)
         return r
+    }
+
+    // MARK: 猜标题
+
+    /// 把第一句里跟时间、重复有关的词剥掉，剩下的当标题
+    private static func suggestTitle(flat: String, rawLines: [String]) -> String? {
+        let candidate = rawLines.first { $0.count >= 2 && $0.count <= 60 } ?? flat
+        guard !candidate.isEmpty else { return nil }
+
+        let noise = [
+            "\\d{4}\\s*年\\s*\\d{1,2}\\s*月\\s*\\d{1,2}\\s*[日号]?",
+            "\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}",
+            "\\d{1,2}\\s*月\\s*\\d{1,2}\\s*[日号]",
+            "(?<![\\d:：])\\d{1,2}[/-]\\d{1,2}(?![\\d:：])",
+            "大后天|后天|明晚|明早|明天|明日|今晚|今早|今天|今日",
+            "(?:下下|下|本|这)?\\s*(?:周|星期|礼拜)\\s*[一二三四五六日天]",
+            "每(?:个)?月(?:\\d{1,2}\\s*[号日])?",
+            "每(?:周|星期|礼拜)[一二三四五六日天、,，和及/\\+]*",
+            "每(?:周|星期|礼拜)",
+            "每隔\\s*\\d{1,2}\\s*天",
+            "每天|每日|天天|每一天|每晚|每早",
+            "工作日",
+            "([01]?\\d|2[0-3])\\s*[:：]\\s*[0-5]\\d",
+            "\\d{1,2}\\s*[点时]\\s*(?:半|\\d{1,2}\\s*分?)?",
+            "凌晨|清晨|早上|早晨|上午|中午|午后|下午|傍晚|晚上|晚间|夜里|夜间|深夜",
+            "(?:记得|提醒我|提醒一下|提醒|别忘|不要忘|要|该|帮我|请|麻烦)"
+        ]
+
+        var s = candidate
+        for p in noise {
+            s = s.replacingOccurrences(of: p, with: "", options: .regularExpression)
+        }
+        s = s.trimmingCharacters(in: CharacterSet(charactersIn: " ,，,。.、;；:：!！?？-—~·*+()（）【】[]「」\"'“”"))
+        if s.count < 2 {
+            // 剥完没剩下什么，就用原句（截断）
+            let raw = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
+            return raw.count >= 2 ? String(raw.prefix(24)) : nil
+        }
+        return String(s.prefix(24))
     }
 
     // MARK: 按重复规则往后推

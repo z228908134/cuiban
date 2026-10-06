@@ -8,25 +8,39 @@ struct AddTaskView: View {
     @State private var customInterval: String = ""
     @State private var useCustom = false
 
-    // 图片识别相关
+    // MARK: 照片
+
     private enum PhotoSource: Int, Identifiable {
         case library, camera
         var id: Int { rawValue }
     }
     @State private var photoSource: PhotoSource? = nil
-    @State private var pickedImage: UIImage? = nil
+    /// 页面上所有照片（老照片 + 刚选的），保存时才落盘
+    @State private var photos: [PhotoSlot] = []
+    @State private var previewOpen = false
+    @State private var previewStart = 0
+
+    // MARK: 识别
+
     @State private var scanning = false
     @State private var parseSummary: String? = nil
     @State private var tipsShown: [String] = []
     @State private var titleAutoFilled = false
 
-    // AI 相关
+    // MARK: 一句话
+
+    @State private var quickText = ""
+    @State private var quickBusy = false
+
+    // MARK: AI（可选）
+
     @ObservedObject private var ai = AIStore.shared
-    @State private var aiInput = ""
     @State private var aiBusy = false
     @State private var aiError: String? = nil
 
     var isEditing: Bool { draft.title != "" && store.task(id: draft.id) != nil }
+
+    private let presetIntervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
 
     init(editing: TaskItem? = nil) {
         if let e = editing {
@@ -34,6 +48,9 @@ struct AddTaskView: View {
             _useCustom = State(initialValue: e.intervalMinutes > 0 &&
                                ![1, 2, 3, 5, 10, 15, 20, 30, 60].contains(e.intervalMinutes))
             _customInterval = State(initialValue: e.intervalMinutes > 0 ? String(e.intervalMinutes) : "")
+            _photos = State(initialValue: e.photos.compactMap { name in
+                AttachmentStore.load(name).map { PhotoSlot(image: $0, fileName: name) }
+            })
         } else {
             var d = TaskItem()
             d.dueDate = Date().addingTimeInterval(30 * 60)
@@ -41,14 +58,14 @@ struct AddTaskView: View {
         }
     }
 
-    private let presetIntervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
-
     var body: some View {
         NavigationView {
             Form {
-                if ai.enabled { aiSection }
+                quickSection
 
                 photoSection
+
+                resultSection
 
                 Section(header: Text("做什么")) {
                     TextField("任务标题", text: $draft.title)
@@ -78,7 +95,8 @@ struct AddTaskView: View {
                     }
                 }
 
-                Section(header: Text("没完成就多久催一次"), footer: Text("任务到期后会先响一次，之后每隔这个间隔再催，直到你点「完成」。")) {
+                Section(header: Text("没完成就多久催一次"),
+                        footer: Text("任务到期后会先响一次，之后每隔这个间隔再催，直到你点「完成」。")) {
                     Picker("提醒间隔", selection: intervalBinding) {
                         Text("跟随默认（\(store.settings.defaultIntervalMinutes) 分钟）").tag(0)
                         ForEach(presetIntervals, id: \.self) { m in
@@ -116,7 +134,8 @@ struct AddTaskView: View {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("保存") { save() }
                         .font(.system(size: 17, weight: .semibold))
-                        .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                        .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                                  && photos.isEmpty)
                 }
             }
         }
@@ -128,141 +147,203 @@ struct AddTaskView: View {
             }
             .ignoresSafeArea()
         }
+        .fullScreenCover(isPresented: $previewOpen) {
+            PhotoViewer(
+                images: photos.map { $0.image },
+                titles: photos.indices.map { "第 \($0 + 1) 张，共 \(photos.count) 张" },
+                start: previewStart
+            )
+        }
     }
 
-    // MARK: - AI 智能解析
+    // MARK: - 说一句话就能建
 
     @ViewBuilder
-    private var aiSection: some View {
-        Section(header: Text("用一句话说"),
-                footer: Text("打一句话让 AI 帮你抽时间、标题和重复规则；选图识别时也会让 AI 再复核一遍。需要联网，用的是你自己在「设置」里填的 API。")) {
+    private var quickSection: some View {
+        Section(header: Text("说一句话就能建"),
+                footer: Text(ai.ready
+                    ? "在本机先解析一遍，再让 AI 复核一次，结果自动填到下面的时间和重复里。"
+                    : "把想做的事打进去，比如「明天下午 3 点开会」，本机就能识别出时间。想去「设置 → AI 智能解析」填个 Key，识别会更准。")) {
             HStack(spacing: 8) {
-                TextField("例如：下周一上午 10 点开周会，每周一次", text: $aiInput)
+                TextField("例如：下周一上午 10 点开周会，每周一次", text: $quickText)
                     .submitLabel(.done)
-                    .onSubmit { runAIText() }
-                if aiBusy {
+                    .onSubmit { runQuick() }
+
+                if quickBusy {
                     ProgressView().scaleEffect(0.8)
                 } else {
-                    Button("解析") { runAIText() }
-                        .disabled(aiInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Button("识别") { runQuick() }
+                        .disabled(quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
 
-            if let e = aiError {
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle")
-                    Text(e).fixedSize(horizontal: false, vertical: true)
+            if quickBusy {
+                Text("正在解析…")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+
+            if !quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button {
+                    quickText = ""
+                    parseSummary = nil
+                    tipsShown = []
+                    aiError = nil
+                } label: {
+                    Text("清空这句话")
+                        .font(.system(size: 13))
                 }
-                .font(.system(size: 12))
-                .foregroundColor(.red)
             }
         }
     }
 
-    private func runAIText() {
-        let text = aiInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// 识别结果统一显示在这里（文字识别和图片识别共用）
+    @ViewBuilder
+    private var resultSection: some View {
+        if scanning {
+            Section(header: Text("识别结果")) {
+                HStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.8)
+                    Text("正在读图…")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                }
+            }
+        } else if aiBusy {
+            Section(header: Text("识别结果")) {
+                HStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.8)
+                    Text("AI 正在复核…")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
+                }
+            }
+        } else if parseSummary != nil || !tipsShown.isEmpty || aiError != nil {
+            Section(header: Text("识别结果"),
+                    footer: Text("识别结论已经写进备注，可以随时改。")) {
+                if let s = parseSummary {
+                    Text(s)
+                        .font(.system(size: 14))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                ForEach(tipsShown, id: \.self) { t in
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "info.circle")
+                        Text(t).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
+                }
+
+                if let e = aiError {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle")
+                        Text(e).fixedSize(horizontal: false, vertical: true)
+                    }
+                    .font(.system(size: 12))
+                    .foregroundColor(.orange)
+                }
+            }
+        }
+    }
+
+    private func runQuick() {
+        let text = quickText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        aiBusy = true
+        quickBusy = true
         aiError = nil
-        AIService.parse(text: text) { res in
+        SmartParser.recognize(text: text) { r in
             DispatchQueue.main.async {
-                aiBusy = false
-                switch res {
-                case .success(let r):
-                    merge(r)
-                    parseSummary = "AI：" + r.summaryText()
-                case .failure(let e):
-                    aiError = e.localizedDescription
-                }
+                quickBusy = false
+                applyLocal(r)
             }
         }
     }
 
-    /// 图片 OCR 之后，可选地让 AI 再解析一遍
-    private func refineWithAI(_ text: String) {
-        guard ai.ready, !text.isEmpty else { return }
-        aiBusy = true
-        AIService.parse(text: text) { res in
-            DispatchQueue.main.async {
-                aiBusy = false
-                switch res {
-                case .success(let r):
-                    merge(r)
-                    parseSummary = "AI：" + r.summaryText()
-                case .failure(let e):
-                    aiError = "AI 复核失败，已用本机识别的结果（\(e.localizedDescription)）"
-                }
-            }
-        }
-    }
-
-    // MARK: - 从图片识别
+    // MARK: - 图片
 
     @ViewBuilder
     private var photoSection: some View {
-        Section(header: Text("从图片识别"),
-                footer: Text("选一张截图或照片，在本机读出里面的文字，自动填好上面的提醒时间和重复规则，并把结论写进备注。全程不联网。")) {
-            if let img = pickedImage {
-                HStack(alignment: .top, spacing: 12) {
-                    Image(uiImage: img)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: 62, height: 62)
-                        .clipShape(RoundedRectangle(cornerRadius: 10))
+        Section(header: Text("图片"),
+                footer: Text("选截图或照片，会在本机读出里面的文字，自动填好上面的时间和重复规则，把结论写进备注；照片本身也会存进任务，清单、日历、催促页上都能看到。全程不联网。")) {
+            if !photos.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 12) {
+                        ForEach(Array(photos.enumerated()), id: \.element.id) { idx, slot in
+                            ZStack(alignment: .topTrailing) {
+                                Image(uiImage: slot.image)
+                                    .resizable()
+                                    .scaledToFill()
+                                    .frame(width: 84, height: 84)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.primary.opacity(0.10), lineWidth: 0.5)
+                                    )
+                                    .onTapGesture {
+                                        previewStart = idx
+                                        previewOpen = true
+                                    }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        if scanning {
-                            HStack(spacing: 8) {
-                                ProgressView().scaleEffect(0.8)
-                                Text("正在读图…")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.secondary)
+                                Button {
+                                    withAnimation { photos.remove(at: idx) }
+                                } label: {
+                                    Image(systemName: "xmark.circle.fill")
+                                        .font(.system(size: 19))
+                                        .foregroundColor(.white)
+                                        .background(Circle().fill(Color.black.opacity(0.5)))
+                                }
+                                .buttonStyle(.plain)
+                                .offset(x: 7, y: -7)
                             }
-                        } else if aiBusy {
-                            HStack(spacing: 8) {
-                                ProgressView().scaleEffect(0.8)
-                                Text("AI 正在复核…")
-                                    .font(.system(size: 13))
-                                    .foregroundColor(.secondary)
-                            }
-                        } else if let s = parseSummary {
-                            Text(s)
-                                .font(.system(size: 13))
-                                .fixedSize(horizontal: false, vertical: true)
+                            .padding(.top, 7)
                         }
-
-                        HStack(spacing: 18) {
-                            Button("重新识别") { runOCR() }
-                                .disabled(scanning)
-                            Button("换一张") { photoSource = .library }
-                            Button("清除") { clearPhoto() }
-                                .foregroundColor(.red)
-                        }
-                        .font(.system(size: 13))
                     }
+                    .padding(.vertical, 2)
                 }
-            } else {
+                Text("点图看大图（共 \(photos.count) 张）")
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+
+            Button {
+                photoSource = .library
+            } label: {
+                Label(photos.isEmpty ? "选照片 / 截图" : "再加一张", systemImage: "photo.on.rectangle.angled")
+            }
+            if ImagePicker.cameraAvailable {
                 Button {
-                    photoSource = .library
+                    photoSource = .camera
                 } label: {
-                    Label("选照片 / 截图", systemImage: "photo.on.rectangle.angled")
-                }
-                if ImagePicker.cameraAvailable {
-                    Button {
-                        photoSource = .camera
-                    } label: {
-                        Label("拍照识别", systemImage: "camera")
-                    }
+                    Label(photos.isEmpty ? "拍照" : "再拍一张", systemImage: "camera")
                 }
             }
 
-            ForEach(tipsShown, id: \.self) { t in
-                HStack(alignment: .top, spacing: 6) {
-                    Image(systemName: "info.circle")
-                    Text(t).fixedSize(horizontal: false, vertical: true)
+            if scanning {
+                HStack(spacing: 8) {
+                    ProgressView().scaleEffect(0.8)
+                    Text("正在读图…")
+                        .font(.system(size: 13))
+                        .foregroundColor(.secondary)
                 }
-                .font(.system(size: 12))
-                .foregroundColor(.orange)
+            }
+
+            if !photos.isEmpty && !scanning {
+                HStack(spacing: 18) {
+                    Button("重新识别") { runOCR() }
+                        .font(.system(size: 13))
+                    Button("清除全部图片") {
+                        withAnimation {
+                            photos.removeAll()
+                            parseSummary = nil
+                            tipsShown = []
+                            aiError = nil
+                        }
+                    }
+                    .font(.system(size: 13))
+                    .foregroundColor(.red)
+                }
             }
         }
     }
@@ -270,7 +351,7 @@ struct AddTaskView: View {
     private var noteEditor: some View {
         ZStack(alignment: .topLeading) {
             if draft.note.isEmpty {
-                Text("可写备注；用图片识别时结果会自动写在这里")
+                Text("可写备注；用图片或一句话识别时，结果会自动写在这里")
                     .font(.system(size: 15))
                     .foregroundColor(.secondary)
                     .padding(.top, 8)
@@ -337,26 +418,28 @@ struct AddTaskView: View {
     // MARK: - 识别流程
 
     private func handlePicked(_ img: UIImage) {
-        pickedImage = img
+        photos.append(PhotoSlot(image: img))
         runOCR()
     }
 
     private func runOCR() {
-        guard let img = pickedImage else { return }
+        guard !photos.isEmpty else { return }
         scanning = true
         parseSummary = nil
         tipsShown = []
-        SmartParser.recognize(image: img) { result in
+        aiError = nil
+        let imgs = photos.map { $0.image }
+        SmartParser.recognize(images: imgs) { result in
             DispatchQueue.main.async {
                 scanning = false
-                applyResult(result)
+                applyLocal(result)
             }
         }
     }
 
-    private func applyResult(_ r: SmartParseResult) {
+    /// 本机结果先落地，再看要不要让 AI 复核
+    private func applyLocal(_ r: SmartParseResult) {
         tipsShown = r.tips
-
         if let e = r.errorText, r.rawLines.isEmpty {
             parseSummary = e
             return
@@ -364,8 +447,29 @@ struct AddTaskView: View {
         parseSummary = r.summaryText()
         merge(r)
 
-        // 配了 AI 的话，再让 AI 基于 OCR 原文复核一遍
-        refineWithAI(r.rawLines.joined(separator: "\n"))
+        let source = r.rawLines.joined(separator: "\n")
+        if ai.ready, !source.isEmpty {
+            refineWithAI(source)
+        }
+    }
+
+    /// 配了 AI 的话，让 AI 基于原文再解析一遍覆盖本机结果
+    private func refineWithAI(_ text: String) {
+        aiBusy = true
+        aiError = nil
+        AIService.parse(text: text) { res in
+            DispatchQueue.main.async {
+                aiBusy = false
+                switch res {
+                case .success(let r):
+                    merge(r)
+                    parseSummary = "AI：" + r.summaryText()
+                    tipsShown = r.tips
+                case .failure(let e):
+                    aiError = "AI 复核没成功，已用本机识别的结果（\(e.localizedDescription)）"
+                }
+            }
+        }
     }
 
     /// 把识别结果落到表单上（时间、重复、标题、备注）
@@ -380,20 +484,12 @@ struct AddTaskView: View {
             titleAutoFilled = true
         }
 
-        let kept = stripImageBlock(draft.note)
+        let kept = stripParseBlock(draft.note)
         let block = r.noteBlock()
         draft.note = kept.isEmpty ? block : kept + "\n\n" + block
     }
 
-    private func clearPhoto() {
-        pickedImage = nil
-        parseSummary = nil
-        tipsShown = []
-        aiError = nil
-        draft.note = stripImageBlock(draft.note)
-    }
-
-    private func stripImageBlock(_ s: String) -> String {
+    private func stripParseBlock(_ s: String) -> String {
         guard let r = s.range(of: parseBlockMarker) else {
             return s.trimmingCharacters(in: .whitespacesAndNewlines)
         }
@@ -425,12 +521,36 @@ struct AddTaskView: View {
         var t = draft
         t.title = t.title.trimmingCharacters(in: .whitespacesAndNewlines)
         t.note = t.note.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.title.isEmpty {
+            t.title = photos.isEmpty ? "新任务" : "图片任务"
+        }
+
         if useCustom, let n = Int(customInterval), n >= 1 {
             t.intervalMinutes = min(n, 1440)
         } else if !useCustom && draft.intervalMinutes == -1 {
             t.intervalMinutes = 0
         }
+
         if t.repeatMode != .weekly { t.weekdays = [] }
+
+        // 照片：新选的落盘，老的沿用，被删掉的从磁盘清掉
+        var names: [String] = []
+        var kept = photos
+        for i in kept.indices {
+            if let n = kept[i].fileName {
+                names.append(n)
+            } else if let n = AttachmentStore.save(kept[i].image) {
+                kept[i].fileName = n
+                names.append(n)
+            }
+        }
+        t.photos = names
+        let before = Set(store.task(id: t.id)?.photos ?? [])
+        let removed = before.subtracting(Set(names))
+        if !removed.isEmpty {
+            AttachmentStore.delete(Array(removed))
+        }
+
         if t.dueDate < Date().addingTimeInterval(-60) && !t.isDone {
             t.dueDate = Date().addingTimeInterval(60)
             t.snoozeUntil = nil

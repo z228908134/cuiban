@@ -22,8 +22,8 @@ targets:
       properties:
         CFBundleDisplayName: 催办
         CFBundleName: Cuiban
-        CFBundleShortVersionString: "1.1.0"
-        CFBundleVersion: "2"
+        CFBundleShortVersionString: "1.2.0"
+        CFBundleVersion: "3"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
@@ -33,15 +33,14 @@ targets:
         UIBackgroundModes:
           - audio
           - fetch
-        UIUserInterfaceStyle: Light
         ITSAppUsesNonExemptEncryption: false
-        NSPhotoLibraryUsageDescription: 需要读取你选中的照片，在本机识别里面的时间，用来快速建任务。
-        NSCameraUsageDescription: 需要调用相机拍照，在本机识别照片里的时间，用来快速建任务。
+        NSPhotoLibraryUsageDescription: 选择照片时会存在本机任务里，并在本机识别照片中的时间，用来快速建任务。
+        NSCameraUsageDescription: 拍照会存在本机任务里，并在本机识别照片中的时间，用来快速建任务。
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.cuiban.app
         PRODUCT_NAME: Cuiban
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "1"
-        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "3"
+        MARKETING_VERSION: "1.2.0"

@@ -6,12 +6,27 @@ struct SettingsView: View {
 
     @State private var aiTesting = false
     @State private var aiTestResult: String? = nil
+    @State private var photoCount = 0
+    @State private var photoSizeText = "0 B"
+    @State private var photoNotice: String? = nil
 
     private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
 
     var body: some View {
         NavigationView {
             Form {
+                // MARK: 外观
+
+                Section(header: Text("外观"),
+                        footer: Text("深色模式下所有页面都会跟着变暗；催促页固定红底白字，不受影响。")) {
+                    Picker("主题", selection: themeBinding) {
+                        ForEach(ThemeMode.allCases) { m in
+                            Text(m.label).tag(m)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
                 // MARK: 通知权限
 
                 Section(header: Text("通知权限"), footer: Text("必须允许通知，催促才能在 App 之外响起来。")) {
@@ -62,11 +77,11 @@ struct SettingsView: View {
                     }
                 }
 
-                // MARK: AI 智能解析
+                // MARK: AI 智能解析（可选增强）
 
                 Section(header: Text("AI 智能解析（可选）"),
-                        footer: Text("打开后，新建任务时可以直接打一句话（如「下周一上午 10 点开周会」），或者选图识别后让 AI 再复核一遍。调用的是你自己填的服务，Key 只存在这台手机上。")) {
-                    Toggle("开启 AI 解析", isOn: $ai.enabled)
+                        footer: Text("不填也能用：打一句话或选张图，本机就能识别出时间和重复规则。填上之后，识别完会让 AI 再复核一遍，遇到绕口的说法会更准。Key 只存在这台手机上。")) {
+                    Toggle("开启 AI 复核", isOn: $ai.enabled)
 
                     if ai.enabled {
                         Picker("服务商", selection: providerBinding) {
@@ -111,6 +126,29 @@ struct SettingsView: View {
                     }
                 }
 
+                // MARK: 照片存储
+
+                Section(header: Text("照片"),
+                        footer: Text("任务里的照片存在本机（Documents/attachments），不会上传。删掉任务会连照片一起删。")) {
+                    HStack {
+                        Text("已存照片")
+                        Spacer()
+                        Text("\(photoCount) 张 · \(photoSizeText)")
+                            .foregroundColor(.secondary)
+                    }
+                    Button("清理没用的照片") {
+                        let n = store.vacuumPhotos()
+                        photoNotice = n == 0 ? "没有需要清理的照片" : "已清理 \(n) 张没用的照片"
+                        refreshPhotoStats()
+                    }
+                    .foregroundColor(.orange)
+                    if let n = photoNotice {
+                        Text(n)
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                }
+
                 // MARK: 数据
 
                 Section(header: Text("数据")) {
@@ -125,14 +163,15 @@ struct SettingsView: View {
                     .foregroundColor(.red)
                 }
 
-                Section(header: Text("怎么用"), footer: Text("催办 v1.1 · 为 TrollStore 打造的免签名原生应用")) {
+                Section(header: Text("怎么用"), footer: Text("催办 v1.2 · 为 TrollStore 打造的免签名原生应用")) {
                     VStack(alignment: .leading, spacing: 8) {
-                        tip("1. 新建任务，选好时间和催促间隔")
-                        tip("2. 也可以直接选一张截图，或打一句话交给 AI 解析")
-                        tip("3. 首次打开时允许通知权限")
-                        tip("4. 到点不完成就一直催，直到你点「完成」")
-                        tip("5. 「日历」页能看整月安排，重复任务会往后推算")
-                        tip("6. 打开「后台常驻」后 App 会留在后台精确计时")
+                        tip("1. 新建任务：打一句话（明天下午 3 点开会），或选一张截图、拍张照")
+                        tip("2. 识别出的时间和重复规则会自动填好，结论写进备注")
+                        tip("3. 照片会存进任务里，清单、日历、催促页都能看到")
+                        tip("4. 首次打开时允许通知权限")
+                        tip("5. 到点不完成就一直催，直到你点「完成」")
+                        tip("6. 「日历」页能看整月安排，重复任务会往后推算")
+                        tip("7. 打开「后台常驻」后 App 会留在后台精确计时")
                     }
                     .padding(.vertical, 4)
                 }
@@ -141,10 +180,18 @@ struct SettingsView: View {
             .navigationBarTitleDisplayMode(.inline)
         }
         .navigationViewStyle(.stack)
-        .onAppear { store.refreshAuth() }
+        .onAppear {
+            store.refreshAuth()
+            refreshPhotoStats()
+        }
         .onReceive(Timer.publish(every: 4, on: .main, in: .common).autoconnect()) { _ in
             store.refreshPendingCount()
         }
+    }
+
+    private func refreshPhotoStats() {
+        photoCount = AttachmentStore.fileCount
+        photoSizeText = AttachmentStore.sizeText
     }
 
     private var pendingCount: Int {
@@ -192,6 +239,17 @@ struct SettingsView: View {
         Text(s).font(.system(size: 13)).foregroundColor(.secondary)
     }
 
+    private var themeBinding: Binding<ThemeMode> {
+        Binding(
+            get: { store.settings.theme },
+            set: { v in
+                var s = store.settings
+                s.theme = v
+                store.updateSettingsPublic(s)
+            }
+        )
+    }
+
     private var intervalBinding: Binding<Int> {
         Binding(
             get: { store.settings.defaultIntervalMinutes },
@@ -225,8 +283,7 @@ struct SettingsView: View {
         )
     }
 
-    private var keepAliveBinding: Binding<Bool> {
-        Binding(
+    private var keepAliveBinding: Binding<Bool> {        Binding(
             get: { store.settings.keepAlive },
             set: { v in
                 var s = store.settings
