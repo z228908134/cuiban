@@ -356,15 +356,31 @@ struct TaskDetailView: View {
         .background(RoundedRectangle(cornerRadius: 14).fill(Color(UIColor.secondarySystemGroupedBackground)))
     }
 
-    /// 备注里的勾选行：勾了就整句删除线置灰，和笔记编辑器一致
+    /// 备注里的勾选行：画出来的方框 + 勾了整句删除线置灰，和笔记编辑器一致
     @ViewBuilder
     private func noteLineView(_ line: String) -> some View {
         let checked = TextEditBridge.markerPrefix(in: line, checked: true) != nil
-        Text(line)
-            .strikethrough(checked)  // 必须在 fixedSize 之前（Text 专属重载，iOS 15 可用）
-            .font(.system(size: 15))
-            .fixedSize(horizontal: false, vertical: true)
-            .foregroundColor(checked ? .secondary : .primary)
+        if let body = TextEditBridge.stripMark(in: line) {
+            HStack(alignment: .top, spacing: 7) {
+                Image(systemName: checked ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 14))
+                    .foregroundColor(checked ? .blue : .secondary)
+                    .padding(.top, 2.5)
+                if body.isEmpty {
+                    Rectangle().fill(Color.clear).frame(height: 1)
+                } else {
+                    Text(body)
+                        .font(.system(size: 15))
+                        .strikethrough(checked)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .foregroundColor(checked ? .secondary : .primary)
+                }
+            }
+        } else {
+            Text(line)
+                .font(.system(size: 15))
+                .fixedSize(horizontal: false, vertical: true)
+        }
     }
 
     // MARK: 照片

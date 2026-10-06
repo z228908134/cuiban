@@ -114,7 +114,7 @@ struct NoteEditorView: View {
     init(note: NoteItem?) {
         self.note = note
         _title = State(initialValue: note?.title ?? "")
-        _bodyText = State(initialValue: note?.body ?? "")
+        _bodyText = State(initialValue: TextEditBridge.migrate(note?.body ?? ""))
         _photos = State(initialValue: note?.photos ?? [])
     }
 
@@ -137,12 +137,8 @@ struct NoteEditorView: View {
 
                 Divider()
 
-                // 格式工具栏（参考微信备忘录）
+                // 格式工具栏（参考滴答清单）
                 formatBar
-
-                Divider()
-
-                bottomBar
             }
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -196,105 +192,84 @@ struct NoteEditorView: View {
         }
     }
 
-    // MARK: 格式工具栏
+    // MARK: 格式工具栏（滴答清单样式：细线图标 + 分组竖线 + 更多菜单）
 
     private var formatBar: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 2) {
-                barText("H") { bridge.toggleLinePrefix("# ") }
-                barIcon("bold") { bridge.wrap("**", "**") }
-                barText("I") { bridge.wrap("*", "*") }
-                barText("U") { bridge.wrap("__", "__") }
-                barIcon("strikethrough") { bridge.wrap("~~", "~~") }
-                barIcon("paintbrush") { bridge.wrap("==", "==") }
+        HStack(spacing: 0) {
+            barIcon("photo.on.rectangle") { photoSource = .library }
+            barIcon("clock") { bridge.insert(fmt(Date(), "M月d日 HH:mm ")) }
+            barIcon("keyboard.chevron.compact.down") { hideKeyboard() }
 
-                barDivider
+            barDivider
 
-                barIcon("checklist") { bridge.toggleChecklist() }
-                barIcon("list.bullet") { bridge.toggleLinePrefix("- ") }
-                barIcon("list.number") { bridge.renumberList() }
-                barIcon("text.quote") { bridge.toggleLinePrefix("> ") }
-                barIcon("curlybraces") { bridge.wrap("`", "`") }
-                barIcon("increase.indent") { bridge.indent(shift: 1) }
-                barIcon("decrease.indent") { bridge.indent(shift: -1) }
+            barText("H") { bridge.toggleLinePrefix("# ") }
+            barText("B") { bridge.wrap("**", "**") }
+            barText("S", strike: true) { bridge.wrap("~~", "~~") }
+            barIcon("highlighter") { bridge.wrap("==", "==") }
 
-                barDivider
+            barDivider
 
-                barIcon("number") { bridge.insert("#") }
-                barIcon("clock") { bridge.insert(fmt(Date(), "M月d日 HH:mm ")) }
-                barIcon("link") { bridge.wrap("[", "](https://)") }
-                barIcon("minus") { bridge.insert("\n———\n") }
-
-                barDivider
-
-                barIcon("doc.on.doc") { bridge.copyAll() }
-                barIcon("doc.plaintext") { showTemplates = true }
-                barIcon("photo.on.rectangle.angled") { photoSource = .library }
-                if ImagePicker.cameraAvailable {
-                    barIcon("camera") { photoSource = .camera }
-                }
-                barIcon("keyboard.chevron.compact.down") { hideKeyboard() }
-            }
-            .padding(.horizontal, 10)
+            barIcon("checkmark.square") { bridge.toggleChecklist() }
+            barIcon("list.bullet") { bridge.toggleLinePrefix("- ") }
+            barIcon("list.number") { bridge.renumberList() }
+            moreMenu
         }
         .frame(height: 42)
+        .padding(.horizontal, 2)
+    }
+
+    /// 右端 ∨：低频功能收进菜单，主栏保持滴答同款的干净一排
+    private var moreMenu: some View {
+        Menu {
+            Button { bridge.wrap("*", "*") } label: { Label("斜体", systemImage: "textformat.italic") }
+            Button { bridge.wrap("__", "__") } label: { Label("下划线", systemImage: "underline") }
+            Button { bridge.toggleLinePrefix("> ") } label: { Label("引用", systemImage: "text.quote") }
+            Button { bridge.wrap("`", "`") } label: { Label("代码", systemImage: "curlybraces") }
+            Button { bridge.insert("#") } label: { Label("编号 #", systemImage: "number") }
+            Button { bridge.wrap("[", "](https://)") } label: { Label("链接", systemImage: "link") }
+            Button { bridge.insert("\n———\n") } label: { Label("分割线", systemImage: "minus") }
+            Divider()
+            Button { bridge.indent(shift: 1) } label: { Label("增加缩进", systemImage: "increase.indent") }
+            Button { bridge.indent(shift: -1) } label: { Label("减少缩进", systemImage: "decrease.indent") }
+            Divider()
+            Button { bridge.copyAll() } label: { Label("复制全文", systemImage: "doc.on.doc") }
+            Button { showTemplates = true } label: { Label("使用模板", systemImage: "doc.plaintext") }
+            if ImagePicker.cameraAvailable {
+                Button { photoSource = .camera } label: { Label("拍照", systemImage: "camera") }
+            }
+        } label: {
+            Image(systemName: "chevron.down")
+                .font(.system(size: 13, weight: .medium))
+                .foregroundColor(.primary.opacity(0.8))
+                .frame(maxWidth: .infinity, minHeight: 40)
+        }
     }
 
     private var barDivider: some View {
-        Divider()
-            .frame(height: 18)
-            .padding(.horizontal, 4)
+        Rectangle()
+            .fill(Color.primary.opacity(0.12))
+            .frame(width: 0.7, height: 18)
     }
 
     private func barIcon(_ system: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.system(size: 17))
-                .foregroundColor(.primary)
-                .frame(minWidth: 36, minHeight: 36)
+                .font(.system(size: 17, weight: .regular))
+                .foregroundColor(.primary.opacity(0.8))
+                .frame(maxWidth: .infinity, minHeight: 40)
         }
         .buttonStyle(.plain)
     }
 
-    private func barText(_ s: String, action: @escaping () -> Void) -> some View {
+    private func barText(_ s: String, strike: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(s)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(.primary)
-                .frame(minWidth: 36, minHeight: 36)
+                .font(.system(size: 15, weight: .semibold))
+                .strikethrough(strike)
+                .foregroundColor(.primary.opacity(0.8))
+                .frame(maxWidth: .infinity, minHeight: 40)
         }
         .buttonStyle(.plain)
-    }
-
-    private var bottomBar: some View {
-        HStack(spacing: 20) {
-            Button {
-                photoSource = .library
-            } label: {
-                Image(systemName: "photo.on.rectangle.angled")
-                    .font(.system(size: 19))
-            }
-            if ImagePicker.cameraAvailable {
-                Button {
-                    photoSource = .camera
-                } label: {
-                    Image(systemName: "camera")
-                        .font(.system(size: 19))
-                }
-            }
-            Button {
-                hideKeyboard()
-            } label: {
-                Image(systemName: "keyboard.chevron.compact.down")
-                    .font(.system(size: 19))
-            }
-            Spacer()
-            Text("自动保存 · " + fmt(Date(), "HH:mm"))
-                .font(.system(size: 11))
-                .foregroundColor(.secondary)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
     }
 
     private var photoStrip: some View {
@@ -331,14 +306,15 @@ struct NoteEditorView: View {
     // MARK: 模板
 
     private func applyTemplate(_ t: NoteTemplate) {
+        let tb = TextEditBridge.migrate(t.body)
         let cur = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
         if cur.isEmpty {
-            bodyText = t.body
+            bodyText = tb
             if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 title = t.name
             }
         } else {
-            bodyText = bodyText + "\n\n" + t.body
+            bodyText = bodyText + "\n\n" + tb
         }
     }
 
@@ -444,6 +420,23 @@ struct NoteBodyEditor: UIViewRepresentable {
             let lr = ns.lineRange(for: NSRange(location: loc, length: 0))
             let line = ns.substring(with: lr)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+            // 新写法的勾选框字符：用画好的圆角方框渲染（字符保留在原位，纯文本不丢）
+            if line.hasPrefix(TextEditBridge.checkedMark)
+                || line.hasPrefix(TextEditBridge.uncheckedMark) {
+                let isChecked = line.hasPrefix(TextEditBridge.checkedMark)
+                let att = NSTextAttachment()
+                att.image = isChecked ? CheckboxArt.checked : CheckboxArt.unchecked
+                att.bounds = CGRect(x: 0, y: -3, width: 17, height: 17)
+                attr.addAttribute(.attachment, value: att,
+                                  range: NSRange(location: lr.location, length: 1))
+                attr.addAttribute(
+                    .font,
+                    value: Self.baseFont,
+                    range: NSRange(location: lr.location, length: 2)
+                )
+            }
+
             if TextEditBridge.markerPrefix(in: trimmed, checked: true) != nil {
                 // 已勾选：只给勾选框后面的那段文字加删除线并置灰
                 if let p = TextEditBridge.markerPrefix(in: line, checked: true) {
@@ -550,6 +543,40 @@ struct NoteBodyEditor: UIViewRepresentable {
     }
 }
 
+// MARK: - 勾选框图形
+
+/// 画出来的勾选框（滴答清单式圆角方框），替代 ⬜️ / ✅ 这类 emoji。
+/// 未勾选是细描边灰方框，勾选是蓝底白勾。
+enum CheckboxArt {
+    static let unchecked = image(checked: false)
+    static let checked = image(checked: true)
+
+    static func image(checked: Bool) -> UIImage {
+        let size = CGSize(width: 17, height: 17)
+        return UIGraphicsImageRenderer(size: size).image { _ in
+            let rect = CGRect(x: 1.6, y: 1.6, width: 13.8, height: 13.8)
+            let box = UIBezierPath(roundedRect: rect, cornerRadius: 3.6)
+            if checked {
+                UIColor.systemBlue.setFill()
+                box.fill()
+                let check = UIBezierPath()
+                check.move(to: CGPoint(x: 4.9, y: 8.9))
+                check.addLine(to: CGPoint(x: 7.3, y: 11.2))
+                check.addLine(to: CGPoint(x: 12.2, y: 5.9))
+                check.lineWidth = 1.9
+                check.lineCapStyle = .round
+                check.lineJoinStyle = .round
+                UIColor.white.setStroke()
+                check.stroke()
+            } else {
+                UIColor.systemGray.setStroke()
+                box.lineWidth = 1.4
+                box.stroke()
+            }
+        }
+    }
+}
+
 /// 工具栏 → 正文的操作桥
 final class TextEditBridge {
     weak var textView: UITextView?
@@ -651,16 +678,43 @@ final class TextEditBridge {
         finish(tv)
     }
 
-    /// 勾选 / 未勾选的标记（同时兼容旧的 - [x] / - [ ] 写法）
-    static let checkedMark = "✅ "
-    static let uncheckedMark = "⬜️ "
+    /// 勾选 / 未勾选的标记。
+    /// 用私有区字符存储（显示时由 restyle 换成画好的方框附件），
+    /// 纯文本内容不丢；同时兼容旧的 - [x] / - [ ] / ⬜️ / ✅ 写法
+    static let checkedMark = "\u{E001} "
+    static let uncheckedMark = "\u{E000} "
 
     static func markerPrefix(in line: String, checked: Bool) -> String? {
         let candidates = checked
-            ? ["✅ ", "- [x] ", "- [X] ", "☑️ "]
-            : ["⬜️ ", "- [ ] ", "☐ "]
+            ? [checkedMark, "✅ ", "- [x] ", "- [X] ", "☑️ "]
+            : [uncheckedMark, "⬜️ ", "- [ ] ", "☐ "]
         for c in candidates where line.hasPrefix(c) { return c }
         return nil
+    }
+
+    /// 行首若带勾选标记，返回去掉标记后的正文；否则返回 nil
+    static func stripMark(in line: String) -> String? {
+        for checked in [true, false] {
+            if let p = markerPrefix(in: line, checked: checked) {
+                return String(line.dropFirst(p.count))
+            }
+        }
+        return nil
+    }
+
+    /// 旧写法（⬜️ / ✅ / - [ ] / - [x] / ☐ / ☑️）统一迁移为新标记
+    static func migrate(_ s: String) -> String {
+        let legacy: [(String, Bool)] = [
+            ("✅ ", true), ("- [x] ", true), ("- [X] ", true), ("☑️ ", true),
+            ("⬜️ ", false), ("- [ ] ", false), ("☐ ", false)
+        ]
+        return s.components(separatedBy: "\n").map { line -> String in
+            guard !line.isEmpty else { return line }
+            for (old, checked) in legacy where line.hasPrefix(old) {
+                return (checked ? checkedMark : uncheckedMark) + String(line.dropFirst(old.count))
+            }
+            return line
+        }.joined(separator: "\n")
     }
 
     func copyAll() {

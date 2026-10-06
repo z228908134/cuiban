@@ -7,6 +7,12 @@ private struct DayEntry: Identifiable {
     let projected: Bool
 }
 
+/// 日历页（参考滴答清单）：
+/// - 月历格子：大号公历 + 小号农历/节日（节日绿字）+ 休/班徽章 + 周任务圆点
+/// - 周日那列显示周数（39周）
+/// - 月末用下月日期补齐最后一行（置灰）
+/// - 上滑收起成周条，下滑展开；周条 + 下方当天任务列表
+/// - 当天没有任务时显示「你这一天没有任务 / 放松一下吧」空状态
 struct MonthView: View {
     @EnvironmentObject var store: TaskStore
     /// 联网更新的法定节假日；数据到位后本视图自动刷新
@@ -16,6 +22,8 @@ struct MonthView: View {
     @State private var selected: Date = Calendar.current.startOfDay(for: Date())
     @State private var editing: TaskItem? = nil
     @State private var showingAdd = false
+    /// true = 收起成周条（上滑）
+    @State private var collapsed = false
 
     private let cal = Calendar.current
     private let weekNames = ["日", "一", "二", "三", "四", "五", "六"]
@@ -25,7 +33,8 @@ struct MonthView: View {
             VStack(spacing: 0) {
                 header
                 weekHeader
-                gridView
+                calendarArea
+                    .gesture(swipeGesture)
                 Divider()
                 daySection
             }
@@ -60,61 +69,97 @@ struct MonthView: View {
         .navigationViewStyle(.stack)
     }
 
-    // MARK: - 顶部月份切换
+    // MARK: - 顶部月份切换（滴答式：居中大标题）
 
     private var header: some View {
         HStack {
             Button { shift(-1) } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 34, height: 34)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.primary.opacity(0.7))
+                    .frame(width: 40, height: 38)
             }
+            .buttonStyle(.plain)
+
             Spacer()
-            VStack(spacing: 2) {
-                Text(fmt(anchor, "yyyy 年 M 月"))
-                    .font(.system(size: 17, weight: .semibold))
-                Text(monthSummary)
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
+
+            Text(collapsed
+                 ? fmt(selected, "yyyy 年 M 月")
+                 : fmt(anchor, "yyyy 年 M 月"))
+                .font(.system(size: 17, weight: .semibold))
+
             Spacer()
+
             Button { shift(1) } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 15, weight: .semibold))
-                    .frame(width: 34, height: 34)
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundColor(.primary.opacity(0.7))
+                    .frame(width: 40, height: 38)
             }
+            .buttonStyle(.plain)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 10)
         .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.bottom, 4)
     }
 
     private var weekHeader: some View {
         HStack(spacing: 0) {
             ForEach(weekNames, id: \.self) { n in
                 Text(n)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(.secondary)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary.opacity(0.85))
                     .frame(maxWidth: .infinity)
             }
         }
         .padding(.bottom, 4)
     }
 
-    private var gridView: some View {
-        let days = monthDays
-        return LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7),
-                         spacing: 2) {
-            ForEach(days.indices, id: \.self) { i in
-                if let d = days[i] {
-                    dayCell(d)
-                } else {
-                    Color.clear.frame(height: 58)
+    // MARK: - 月历 / 周条
+
+    @ViewBuilder
+    private var calendarArea: some View {
+        if collapsed {
+            weekGrid
+            Button {
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                    collapsed = false
                 }
+            } label: {
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(.secondary)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 24)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        } else {
+            monthGrid
+        }
+    }
+
+    private var monthGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7),
+                  spacing: 0) {
+            ForEach(monthCells, id: \.self) { d in
+                dayCell(d, dimmed: !cal.isDate(d, equalTo: anchor, toGranularity: .month))
             }
         }
         .padding(.horizontal, 4)
-        .padding(.bottom, 8)
+        .padding(.bottom, 6)
+    }
+
+    /// 收起后的周条：所选日期所在的那一周
+    private var weekGrid: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7),
+                  spacing: 0) {
+            ForEach(weekCells, id: \.self) { d in
+                dayCell(d, dimmed: false)
+            }
+        }
+        .padding(.horizontal, 4)
+        .padding(.top, 2)
     }
 
     private func dotsView(_ items: [DayEntry]) -> some View {
@@ -123,58 +168,75 @@ struct MonthView: View {
             ForEach(dots.indices, id: \.self) { i in
                 Circle()
                     .fill(dotColor(dots[i]))
-                    .frame(width: 4.5, height: 4.5)
+                    .frame(width: 4, height: 4)
             }
         }
-        .frame(height: 6)
+        .frame(height: 5)
     }
 
-    private func dayCell(_ d: Date) -> some View {
+    /// 单个日期格子（滴答式：数字在上，农历/节日在下，休班徽章在右上）
+    private func dayCell(_ d: Date, dimmed: Bool) -> some View {
         let key = cal.startOfDay(for: d)
         let items = entries[key] ?? []
         let isSelected = cal.isDate(d, inSameDayAs: selected)
         let isToday = cal.isDateInToday(d)
         let badge = LunarCalendar.holidayBadge(for: key)
         let sub = LunarCalendar.subtitle(for: key)
-        // 放假日的数字用节日橙，一眼看出连休
-        let numberColor: Color = isSelected
+        let isSunday = cal.component(.weekday, from: d) == 1
+        let isWeekend = cal.isDateInWeekend(d)
+
+        // 数字颜色：选中/今日白字橙圈；周末与法定假日橙红；平时黑
+        let numberColor: Color = isSelected || isToday
             ? .white
-            : (badge == "休" ? LunarCalendar.festivalColor : (isToday ? brandColor : .primary))
+            : (isWeekend || badge != nil ? LunarCalendar.festivalColor : .primary)
+
+        // 数字下那行：周日显示周数，其余显示农历/节气/节日
+        let subText = isSunday
+            ? "\(cal.component(.weekOfYear, from: d))周"
+            : sub.text
+        let subColor: Color = isSunday
+            ? .secondary.opacity(0.55)
+            : sub.color
 
         return Button {
             selected = key
+            if !cal.isDate(d, equalTo: anchor, toGranularity: .month) {
+                anchor = d
+            }
         } label: {
-            VStack(spacing: 2) {
+            VStack(spacing: 1) {
                 ZStack(alignment: .topTrailing) {
                     Text("\(cal.component(.day, from: d))")
-                        .font(.system(size: 15, weight: isSelected || isToday ? .bold : .regular))
-                        .foregroundColor(numberColor)
-                        .frame(width: 26, height: 26)
+                        .font(.system(size: 17, weight: isSelected || isToday ? .semibold : .regular))
+                        .foregroundColor(dimmed ? numberColor.opacity(0.35) : numberColor)
+                        .frame(width: 30, height: 30)
                         .background(
-                            Circle().fill(isSelected ? brandColor
-                                          : (isToday ? brandColor.opacity(0.13) : Color.clear))
+                            Circle().fill(
+                                (isSelected || isToday) ? brandColor : Color.clear
+                            )
                         )
 
                     if let b = badge {
                         Text(b)
-                            .font(.system(size: 8, weight: .bold))
+                            .font(.system(size: 7.5, weight: .bold))
                             .foregroundColor(.white)
-                            .frame(width: 13, height: 13)
-                            .background(Circle().fill(b == "休" ? LunarCalendar.restColor
-                                                       : LunarCalendar.workColor))
-                            .offset(x: 6, y: -4)
+                            .frame(width: 12, height: 12)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(
+                                b == "休" ? LunarCalendar.restColor : LunarCalendar.workColor
+                            ))
+                            .offset(x: 9, y: -4)
                     }
                 }
 
-                Text(sub.text)
+                Text(subText)
                     .font(.system(size: 9))
-                    .foregroundColor(isSelected ? .white.opacity(0.85) : sub.color)
+                    .foregroundColor(dimmed ? subColor.opacity(0.4) : subColor)
                     .lineLimit(1)
 
                 dotsView(items)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 58)
+            .frame(height: 62)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -187,38 +249,88 @@ struct MonthView: View {
         return brandColor
     }
 
+    // MARK: - 滑动手势：左右翻页，上滑收起，下滑展开
+
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onEnded { v in
+                let hw = abs(v.translation.width)
+                let hh = abs(v.translation.height)
+                if hw > hh, hw > 50 {
+                    withAnimation(.easeOut(duration: 0.2)) {
+                        shift(v.translation.width < 0 ? 1 : -1)
+                    }
+                } else if hh > hw, hh > 40 {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
+                        collapsed = v.translation.height < 0
+                    }
+                }
+            }
+    }
+
     // MARK: - 选中那天的列表
 
     private var daySection: some View {
         let items = dayEntries
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
-                HStack {
-                    Text(fmt(selected, "M月d日 EEEE"))
-                        .font(.system(size: 15, weight: .semibold))
-                    Spacer()
-                    Text(items.isEmpty ? "没有任务" : "\(items.count) 个任务")
-                        .font(.system(size: 12))
-                        .foregroundColor(.secondary)
-                }
-                .padding(.horizontal, 16)
-                .padding(.top, 12)
-                .padding(.bottom, 6)
-
                 if items.isEmpty {
-                    Text("这一天还没有安排，点右下角 + 新建，或在「清单」里把任务挪过来。")
-                        .font(.system(size: 13))
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
+                    emptyState
+                        .frame(maxWidth: .infinity)
+                        .padding(.top, collapsed ? 8 : 22)
+                        .padding(.bottom, 30)
                 } else {
+                    HStack {
+                        Text(fmt(selected, "M月d日 EEEE"))
+                            .font(.system(size: 15, weight: .semibold))
+                        Spacer()
+                        Text("\(items.count) 个任务")
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .padding(.bottom, 6)
+
                     ForEach(items) { e in
                         entryRow(e)
                         Divider().padding(.leading, 16)
                     }
+                    Color.clear.frame(height: 24)
                 }
             }
-            .padding(.bottom, 20)
+        }
+    }
+
+    /// 滴答式空状态：日历卡片插画 + 「你这一天没有任务 / 放松一下吧」
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 30)
+                    .fill(Color.primary.opacity(0.055))
+                    .frame(width: 180, height: 126)
+                    .rotationEffect(.degrees(-7))
+                VStack(spacing: 0) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(brandColor)
+                        .frame(width: 112, height: 20)
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(UIColor.secondarySystemGroupedBackground))
+                        .frame(width: 112, height: 74)
+                        .overlay(
+                            Image(systemName: "checkmark.circle")
+                                .font(.system(size: 20))
+                                .foregroundColor(brandColor)
+                        )
+                        .shadow(color: .black.opacity(0.07), radius: 7, y: 4)
+                }
+                .offset(y: -4)
+            }
+            Text("你这一天没有任务")
+                .font(.system(size: 16, weight: .medium))
+            Text("放松一下吧")
+                .font(.system(size: 13))
+                .foregroundColor(.secondary)
         }
     }
 
@@ -276,23 +388,46 @@ struct MonthView: View {
 
     // MARK: - 数据
 
-    private var monthDays: [Date?] {
+    /// 本月格子（含前后补位）：补位用相邻月的真实日期，置灰显示
+    private var monthCells: [Date] {
         guard let interval = cal.dateInterval(of: .month, for: anchor) else { return [] }
         let first = interval.start
         let count = cal.range(of: .day, in: .month, for: anchor)?.count ?? 30
         let leading = cal.component(.weekday, from: first) - 1
-        var arr: [Date?] = Array(repeating: nil, count: max(0, leading))
-        for i in 0..<count {
-            arr.append(cal.date(byAdding: .day, value: i, to: first))
+        var arr: [Date] = []
+        // 上月补位
+        for i in (1...max(0, leading)).reversed() {
+            if let d = cal.date(byAdding: .day, value: -i, to: first) {
+                arr.append(d)
+            }
         }
-        while arr.count % 7 != 0 { arr.append(nil) }
+        for i in 0..<count {
+            if let d = cal.date(byAdding: .day, value: i, to: first) {
+                arr.append(d)
+            }
+        }
+        // 下月补齐最后一行
+        var tail = (7 - arr.count % 7) % 7
+        var last = interval.end
+        while tail > 0 {
+            arr.append(last)
+            if let next = cal.date(byAdding: .day, value: 1, to: last) { last = next }
+            tail -= 1
+        }
         return arr
     }
 
+    /// 收起时：所选日期所在周的 7 天
+    private var weekCells: [Date] {
+        guard let interval = cal.dateInterval(of: .weekOfYear, for: selected) else { return [] }
+        return (0..<7).compactMap { cal.date(byAdding: .day, value: $0, to: interval.start) }
+    }
+
     private var entries: [Date: [DayEntry]] {
+        // 覆盖网格里可能出现的相邻月日期
         guard let interval = cal.dateInterval(of: .month, for: anchor) else { return [:] }
-        let start = interval.start
-        let end = interval.end
+        let start = cal.date(byAdding: .day, value: -10, to: interval.start) ?? interval.start
+        let end = cal.date(byAdding: .day, value: 14, to: interval.end) ?? interval.end
         var map: [Date: [DayEntry]] = [:]
 
         for t in store.tasks {
@@ -318,14 +453,16 @@ struct MonthView: View {
         (entries[cal.startOfDay(for: selected)] ?? []).sorted { $0.date < $1.date }
     }
 
-    private var monthSummary: String {
-        let n = entries.values.reduce(0) { $0 + $1.count }
-        return n == 0 ? "本月没有任务" : "本月共 \(n) 个任务"
-    }
-
-    // MARK: - 翻月
+    // MARK: - 翻页（展开=按月，收起=按周）
 
     private func shift(_ delta: Int) {
+        if collapsed {
+            if let d = cal.date(byAdding: .day, value: delta * 7, to: selected) {
+                selected = cal.startOfDay(for: d)
+                anchor = d
+            }
+            return
+        }
         guard let newAnchor = cal.date(byAdding: .month, value: delta, to: anchor) else { return }
         anchor = newAnchor
         let day = cal.component(.day, from: selected)
