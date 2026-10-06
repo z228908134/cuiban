@@ -361,9 +361,9 @@ struct TaskDetailView: View {
     private func noteLineView(_ line: String) -> some View {
         let checked = TextEditBridge.markerPrefix(in: line, checked: true) != nil
         Text(line)
+            .strikethrough(checked)  // 必须在 fixedSize 之前（Text 专属重载，iOS 15 可用）
             .font(.system(size: 15))
             .fixedSize(horizontal: false, vertical: true)
-            .strikethrough(checked)
             .foregroundColor(checked ? .secondary : .primary)
     }
 

@@ -534,8 +534,8 @@ struct NoteBodyEditor: UIViewRepresentable {
             guard let nl = newLine else { return }
             tv.text = ns.replacingCharacters(in: lr, with: nl)
             parent.restyle(tv)
-            if parent.text.wrappedValue != tv.text {
-                parent.text.wrappedValue = tv.text
+            if parent.text != tv.text {
+                parent.text = tv.text
             }
         }
     }
