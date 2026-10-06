@@ -9,6 +9,8 @@ private struct DayEntry: Identifiable {
 
 struct MonthView: View {
     @EnvironmentObject var store: TaskStore
+    /// 联网更新的法定节假日；数据到位后本视图自动刷新
+    @StateObject private var holidayService = HolidayService.shared
 
     @State private var anchor: Date = Date()
     @State private var selected: Date = Calendar.current.startOfDay(for: Date())
@@ -50,6 +52,9 @@ struct MonthView: View {
             }
             .sheet(isPresented: $showingAdd) {
                 AddTaskView()
+            }
+            .onAppear {
+                holidayService.refreshIfNeeded()
             }
         }
         .navigationViewStyle(.stack)

@@ -624,58 +624,90 @@ struct AddTaskView: View {
 // MARK: - 多行自高输入框
 
 /// iOS 15 的 TextField 不支持多行，用 UITextView 包一层。
-/// 高度随内容自动增长；宽度交给 SwiftUI 按剩余空间分配（自动换行的关键）。
-struct GrowingTextView: UIViewRepresentable {
+///
+/// 高度方案（v1.5 起彻底重写）：不再依赖 UITextView 的
+/// intrinsicContentSize —— 那条路放进 Form 的自适应行高里，首次布局
+/// 宽度不对时会把行撑到整屏并卡住不再回缩。改为：
+///   1. 外层用 .frame(height:) 显式固定高度；
+///   2. 内部在文字变化 / 宽度变化时用 sizeThatFits 按「当前实际
+///      宽度」算出贴合内容的高度，写回 height binding。
+/// 空闲时最小 46pt（一行），字多就长高，删字就缩回，超过上限内部滚动。
+struct GrowingTextView: View {
     @Binding var text: String
+    var minHeight: CGFloat = 46
+    var maxHeight: CGFloat = 280
 
-    func makeUIView(context: Context) -> UITextView {
-        let tv = WrappingTextView()
-        tv.font = .systemFont(ofSize: 16)
-        tv.textColor = .label
-        tv.backgroundColor = .clear
-        tv.isScrollEnabled = false
-        tv.textContainerInset = UIEdgeInsets(top: 10, left: 4, bottom: 10, right: 4)
-        tv.delegate = context.coordinator
-        return tv
+    @State private var h: CGFloat = 0
+
+    var body: some View {
+        Backing(text: $text, height: $h, minHeight: minHeight, maxHeight: maxHeight)
+            .frame(height: h == 0 ? minHeight : h)
     }
 
-    func updateUIView(_ tv: UITextView, context: Context) {
-        if tv.text != text {
-            tv.text = text
-            tv.invalidateIntrinsicContentSize()
-        }
-    }
+    private struct Backing: UIViewRepresentable {
+        @Binding var text: String
+        @Binding var height: CGFloat
+        var minHeight: CGFloat
+        var maxHeight: CGFloat
 
-    func makeCoordinator() -> Coordinator { Coordinator(self) }
-
-    final class Coordinator: NSObject, UITextViewDelegate {
-        var parent: GrowingTextView
-        init(_ p: GrowingTextView) { parent = p }
-
-        func textViewDidChange(_ tv: UITextView) {
-            parent.text = tv.text
-            tv.invalidateIntrinsicContentSize()
-        }
-    }
-
-    /// UITextView 默认把「整段文字的宽度」当作理想宽度回报，放进 HStack 就会
-    /// 横向撑开、不换行。把宽度改成 noIntrinsicMetric（不确定），SwiftUI 就会
-    /// 按可用宽度给布局；高度按内容回报，实现自增。
-    private final class WrappingTextView: UITextView {
-        private var lastHeight: CGFloat = 0
-        private let minHeight: CGFloat = 44
-
-        override var intrinsicContentSize: CGSize {
-            let h = max(minHeight, contentSize.height + textContainerInset.top + textContainerInset.bottom)
-            return CGSize(width: UIView.noIntrinsicMetric, height: h)
+        func makeUIView(context: Context) -> UITextView {
+            let tv = UITextView()
+            tv.font = .systemFont(ofSize: 16)
+            tv.textColor = .label
+            tv.backgroundColor = .clear
+            tv.isScrollEnabled = false
+            tv.textContainerInset = UIEdgeInsets(top: 10, left: 4, bottom: 10, right: 4)
+            tv.delegate = context.coordinator
+            context.coordinator.parent = self
+            return tv
         }
 
-        override func layoutSubviews() {
-            super.layoutSubviews()
-            let h = max(minHeight, contentSize.height + textContainerInset.top + textContainerInset.bottom)
-            if abs(h - lastHeight) > 0.5 {
-                lastHeight = h
-                invalidateIntrinsicContentSize()
+        func updateUIView(_ tv: UITextView, context: Context) {
+            context.coordinator.parent = self
+            if tv.text != text {
+                tv.text = text
+            }
+            context.coordinator.recalc(tv)
+        }
+
+        func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+        final class Coordinator: NSObject, UITextViewDelegate {
+            var parent: Backing
+            private var retries = 0
+
+            init(_ p: Backing) { parent = p }
+
+            func textViewDidChange(_ tv: UITextView) {
+                parent.text = tv.text
+                recalc(tv)
+            }
+
+            func recalc(_ tv: UITextView) {
+                if tv.bounds.width < 10 {
+                    // 还没完成首次布局，宽度未知；稍后重试（有次数上限）
+                    if retries < 30 {
+                        retries += 1
+                        DispatchQueue.main.async { [weak self, weak tv] in
+                            if let self = self, let tv = tv { self.recalc(tv) }
+                        }
+                    }
+                    return
+                }
+                let fit = tv.sizeThatFits(
+                    CGSize(width: tv.bounds.width, height: .greatestFiniteMagnitude)
+                )
+                var newH = max(parent.minHeight, ceil(fit.height))
+                let capped = newH > parent.maxHeight
+                newH = min(newH, parent.maxHeight)
+                if tv.isScrollEnabled != capped {
+                    tv.isScrollEnabled = capped
+                }
+                let finalH = newH
+                DispatchQueue.main.async { [weak self] in
+                    guard let self = self, abs(self.parent.height - finalH) > 0.5 else { return }
+                    self.parent.height = finalH
+                }
             }
         }
     }

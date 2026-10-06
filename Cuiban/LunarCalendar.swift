@@ -34,9 +34,8 @@ enum LunarCalendar {
         let cal = Calendar.current
         let y = cal.component(.year, from: date)
         let key = y * 10000 + cal.component(.month, from: date) * 100 + cal.component(.day, from: date)
-        if workSet.contains(key) { return "班" }
-        if restSet.contains(key) { return "休" }
-        return nil
+        // 优先用联网更新到的新安排；该年还没数据时退回内置表
+        return HolidayService.shared.badge(for: key, year: y)
     }
 
     /// 这天是不是休息日（含法定调休），供展示用
@@ -211,5 +210,116 @@ enum LunarCalendar {
             }
         }
         return s
+    }
+}
+
+// MARK: - 法定节假日自动更新
+//
+// 内置表只有已公布的年份；以后每年的新安排会由这里自动拉取：
+//   - App 启动时检查当年（9 月起再预取下一年）有没有新数据；
+//   - 没有就从公共节假日接口拉一份，缓存到本机文档目录；
+//   - 拉不到（没网/接口挂了）就继续用内置表，不影响使用。
+final class HolidayService: ObservableObject {
+    static let shared = HolidayService()
+
+    struct YearData: Codable {
+        var rest: [Int]  // 放假日 (yyyyMMdd)
+        var work: [Int]  // 调休上班日 (yyyyMMdd)
+    }
+
+    /// 远端拉到的数据：年 -> 休/班
+    @Published private(set) var remote: [Int: YearData] = [:]
+
+    private init() { loadCaches() }
+
+    /// 查某天的 休/班；该年有远端数据就用远端，否则用内置表
+    func badge(for key: Int, year: Int) -> String? {
+        if let d = remote[year] {
+            if d.work.contains(key) { return "班" }
+            if d.rest.contains(key) { return "休" }
+            return nil
+        }
+        if LunarCalendar.workSet.contains(key) { return "班" }
+        if LunarCalendar.restSet.contains(key) { return "休" }
+        return nil
+    }
+
+    /// App 启动时调用
+    func refreshIfNeeded() {
+        let cal = Calendar.current
+        let now = Date()
+        let thisYear = cal.component(.year, from: now)
+        var years = [thisYear]
+        if cal.component(.month, from: now) >= 9 {
+            years.append(thisYear + 1)  // 下一年安排通常 10~11 月公布，提前备好
+        }
+        for y in years where remote[y] == nil {
+            fetch(year: y)
+        }
+    }
+
+    private func fetch(year: Int) {
+        guard let url = URL(string: "https://timor.tech/api/holiday/year/\(year)") else { return }
+        var req = URLRequest(url: url)
+        req.timeoutInterval = 12
+        URLSession.shared.dataTask(with: req) { [weak self] data, resp, error in
+            guard let self = self,
+                  error == nil,
+                  let http = resp as? HTTPURLResponse, http.statusCode == 200,
+                  let data = data,
+                  let decoded = try? JSONDecoder().decode(HolidayAPIResponse.self, from: data),
+                  decoded.code == 0,
+                  let days = decoded.holiday, !days.isEmpty else { return }
+
+            var rest: [Int] = []
+            var work: [Int] = []
+            for (k, info) in days {
+                let parts = k.split(separator: "-")
+                guard parts.count == 2,
+                      let mm = Int(parts[0]), let dd = Int(parts[1]),
+                      (1...12).contains(mm), (1...31).contains(dd) else { continue }
+                let key = year * 10000 + mm * 100 + dd
+                if info.holiday { rest.append(key) } else { work.append(key) }
+            }
+            guard !rest.isEmpty || !work.isEmpty else { return }
+            let yearData = YearData(rest: rest.sorted(), work: work.sorted())
+
+            DispatchQueue.main.async {
+                self.remote[year] = yearData
+                self.saveCache(year: year, data: yearData)
+            }
+        }.resume()
+    }
+
+    private struct HolidayAPIResponse: Decodable {
+        let code: Int
+        let holiday: [String: DayInfo]?
+    }
+    private struct DayInfo: Decodable {
+        let holiday: Bool
+    }
+
+    // MARK: 本机缓存
+
+    private var cacheDir: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    }
+
+    private func loadCaches() {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: cacheDir, includingPropertiesForKeys: nil) else { return }
+        for f in files where f.lastPathComponent.hasPrefix("holiday_") && f.pathExtension == "json" {
+            let name = f.deletingPathExtension().lastPathComponent
+            guard let y = Int(name.replacingOccurrences(of: "holiday_", with: "")), y > 2000,
+                  let d = try? Data(contentsOf: f),
+                  let yd = try? JSONDecoder().decode(YearData.self, from: d) else { continue }
+            remote[y] = yd
+        }
+    }
+
+    private func saveCache(year: Int, data: YearData) {
+        if let d = try? JSONEncoder().encode(data) {
+            try? d.write(to: cacheDir.appendingPathComponent("holiday_\(year).json"))
+        }
     }
 }
