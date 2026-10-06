@@ -382,9 +382,9 @@ struct NoteBodyEditor: UIViewRepresentable {
             }
         }
         // 工具栏操作后重新套样式（附件/删除线/标题）
-        bridge.refreshUI = { [weak self, weak tv] in
-            guard let self = self, let tv = tv else { return }
-            self.restyle(tv)
+        bridge.refreshUI = { [weak tv] in
+            guard let tv = tv else { return }
+            NoteBodyEditor.restyle(tv)
         }
         // 点勾选框直接打勾 / 取消（滴答式交互）
         // 注意：必须挂 delegate，只有点在勾选框上时才接管这次点击，
@@ -447,7 +447,7 @@ struct NoteBodyEditor: UIViewRepresentable {
     /// 勾选框标记字符（私有区）显示时替换成 U+FFFC + 附件图片（1:1，光标不乱）。
     /// 打字期间（输入法有 markedText 组合状态）绝不重设 attributedText，
     /// 否则组合串会被清掉、字打不进去。
-    func restyle(_ tv: UITextView) {
+    static func restyle(_ tv: UITextView) {
         guard tv.markedTextRange == nil else { return }
         let content = tv.text ?? ""
         // 标记字符 -> 附件占位符（等长替换）
@@ -530,12 +530,12 @@ struct NoteBodyEditor: UIViewRepresentable {
                 parent.text = clean
             }
             parent.bridge.record(tv)
-            parent.restyle(tv)
+            NoteBodyEditor.restyle(tv)
         }
 
         /// 编辑结束（键盘收起）后再补一次样式
         func textViewDidEndEditing(_ tv: UITextView) {
-            parent.restyle(tv)
+            NoteBodyEditor.restyle(tv)
         }
 
         // MARK: 点勾选框打勾
@@ -602,7 +602,7 @@ struct NoteBodyEditor: UIViewRepresentable {
                 location: min(lr.location + min(max(rel, 0), max(lineLen - 1, 0)), newNS.length),
                 length: 0
             )
-            parent.restyle(tv)
+            NoteBodyEditor.restyle(tv)
             if parent.text != newAll {
                 parent.text = newAll
             }
