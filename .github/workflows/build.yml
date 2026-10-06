@@ -1,0 +1,90 @@
+name: build-ipa
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Xcode version
+        run: xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate assets (icons & alarm sound)
+        run: python3 tools/make_assets.py
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build unsigned app
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Cuiban.xcodeproj \
+            -scheme Cuiban \
+            -configuration Release \
+            -sdk iphoneos \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build 2>&1 | tee build.log
+
+      - name: Package IPA
+        run: |
+          APP="build/Build/Products/Release-iphoneos/Cuiban.app"
+          test -d "$APP" || { echo "app not found"; exit 1; }
+          rm -rf Payload Cuiban.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry Cuiban.ipa Payload
+          ls -lh Cuiban.ipa
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Cuiban-ipa
+          path: Cuiban.ipa
+          retention-days: 90
+
+      - name: Publish to Releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" \
+            --title "催办 IPA build ${{ github.run_number }}" \
+            --notes "免签名 IPA，下载后用 TrollStore 直接安装。" \
+            Cuiban.ipa || true
+
+      - name: Upload build log (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7
+
+      - name: Open an issue with the log (on failure)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "自动构建失败（run ${{ github.run_number }}）。日志尾部如下："
+            echo ""
+            echo '```'
+            tail -c 6000 build.log || echo "无日志"
+            echo '```'
+          } > issue.md
+          gh issue create --title "构建失败 run-${{ github.run_number }}" --body-file issue.md || true

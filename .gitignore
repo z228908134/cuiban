@@ -1,0 +1,12 @@
+build/
+DerivedData/
+*.xcodeproj
+Payload/
+*.ipa
+issue.md
+.DS_Store
+
+# 由 tools/make_assets.py 在构建机本地生成
+Cuiban/Resources/*.wav
+Cuiban/Assets.xcassets/AppIcon.appiconset/*.png
+preview-icon-*.png
