@@ -10,6 +10,20 @@ struct SettingsView: View {
     @State private var photoSizeText = "0 B"
     @State private var photoNotice: String? = nil
 
+    // MARK: 备份状态
+
+    @State private var backupList: [BackupEntry] = []
+    @State private var backupNotice: String? = nil
+    @State private var exportItem: ExportItem? = nil
+    @State private var importOpen = false
+    @State private var restorePayload: BackupPayload? = nil
+    @State private var restoreSource = ""
+
+    struct ExportItem: Identifiable {
+        let id = UUID()
+        let url: URL
+    }
+
     private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
 
     var body: some View {
@@ -149,6 +163,50 @@ struct SettingsView: View {
                     }
                 }
 
+                // MARK: 备份与恢复
+
+                Section(header: Text("备份与恢复"),
+                        footer: Text("自动备份保存在 App 本机，最多留 10 份。「备份到 iCloud」走系统文件面板：在弹出的面板里选「iCloud 云盘」下的目录，备份文件就会真的存进 iCloud，换手机也能从「文件」App 拿回来。")) {
+                    Toggle("自动备份（数据一变就存）", isOn: autoBackupBinding)
+                    Toggle("备份里包含照片", isOn: backupPhotosBinding)
+
+                    HStack {
+                        Text("本地备份")
+                        Spacer()
+                        Text(backupSummaryText)
+                            .foregroundColor(.secondary)
+                            .font(.system(size: 13))
+                    }
+
+                    Button("立即备份一份") { doBackupNow() }
+
+                    Button("备份到 iCloud 云盘 / 文件…") { prepareExport() }
+
+                    Button("从文件恢复…") { importOpen = true }
+
+                    if !backupList.isEmpty {
+                        Menu {
+                            ForEach(backupList.prefix(10)) { b in
+                                Button(b.title) { restoreFromLocal(b) }
+                            }
+                        } label: {
+                            HStack {
+                                Text("从本地备份恢复…")
+                                Image(systemName: "chevron.up.chevron.down")
+                                    .font(.system(size: 11))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
+
+                    if let n = backupNotice {
+                        Text(n)
+                            .font(.system(size: 12))
+                            .foregroundColor(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+
                 // MARK: 数据
 
                 Section(header: Text("数据")) {
@@ -163,7 +221,7 @@ struct SettingsView: View {
                     .foregroundColor(.red)
                 }
 
-                Section(header: Text("怎么用"), footer: Text("催办 v1.2.2 · 为 TrollStore 打造的免签名原生应用")) {
+                Section(header: Text("怎么用"), footer: Text("催办 v1.3.0 · 为 TrollStore 打造的免签名原生应用")) {
                     VStack(alignment: .leading, spacing: 8) {
                         tip("1. 新建任务：打一句话（明天下午 3 点开会），或选一张截图、拍张照")
                         tip("2. 识别出的时间和重复规则会自动填好，结论写进备注")
@@ -178,15 +236,109 @@ struct SettingsView: View {
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $exportItem) { item in
+                ExportFilesSheet(urls: [item.url]) {
+                    BackupStore.lastExportAt = Date()
+                    backupNotice = "已保存到你选的位置（放进 iCloud 云盘的会自动同步）"
+                }
+            }
+            .alert(isPresented: Binding(
+                get: { restorePayload != nil },
+                set: { if !$0 { restorePayload = nil } }
+            )) {
+                Alert(
+                    title: Text("确认恢复？"),
+                    message: Text(restoreConfirmText),
+                    primaryButton: .destructive(Text("覆盖恢复")) { performRestore() },
+                    secondaryButton: .cancel(Text("取消"))
+                )
+            }
         }
         .navigationViewStyle(.stack)
+        .sheet(isPresented: $importOpen) {
+            ImportFileSheet { url in handleImport(url) }
+        }
         .onAppear {
             store.refreshAuth()
             refreshPhotoStats()
+            refreshBackupStats()
         }
         .onReceive(Timer.publish(every: 4, on: .main, in: .common).autoconnect()) { _ in
             store.refreshPendingCount()
         }
+    }
+
+    // MARK: 备份相关
+
+    private var backupSummaryText: String {
+        if backupList.isEmpty { return "暂无" }
+        return "\(backupList.count) 份 · 最近 " + fmt(backupList[0].date, "MM-dd HH:mm")
+    }
+
+    private var restoreConfirmText: String {
+        guard let p = restorePayload else { return "" }
+        var s = "将用「\(restoreSource)」覆盖当前的所有任务和设置（含 \(p.tasks.count) 个任务）。"
+        if p.photos.isEmpty && p.tasks.contains(where: { !$0.photos.isEmpty }) {
+            s += "\n注意：这份备份里没有照片数据，恢复后任务的图片会缺失。"
+        }
+        return s
+    }
+
+    private func refreshBackupStats() {
+        backupList = BackupStore.listBackups()
+    }
+
+    private func doBackupNow() {
+        let tasks = store.tasks
+        let settings = store.settings
+        DispatchQueue.global(qos: .userInitiated).async {
+            let ok = BackupStore.writeBackup(tasks: tasks, settings: settings, tag: "手动") != nil
+            DispatchQueue.main.async {
+                backupNotice = ok ? "已备份一份（本机）" : "备份失败，重试一次看看"
+                refreshBackupStats()
+            }
+        }
+    }
+
+    private func prepareExport() {
+        let tasks = store.tasks
+        let settings = store.settings
+        DispatchQueue.global(qos: .userInitiated).async {
+            let url = BackupStore.makeExportFile(tasks: tasks, settings: settings)
+            DispatchQueue.main.async {
+                if let u = url {
+                    exportItem = ExportItem(url: u)
+                } else {
+                    backupNotice = "备份文件生成失败"
+                }
+            }
+        }
+    }
+
+    private func restoreFromLocal(_ entry: BackupEntry) {
+        guard let p = BackupStore.readPayload(at: entry.url) else {
+            backupNotice = "这份备份读不出来，可能文件损坏了"
+            return
+        }
+        restoreSource = entry.title
+        restorePayload = p
+    }
+
+    private func handleImport(_ url: URL) {
+        guard let p = BackupStore.readPayload(at: url) else {
+            backupNotice = "这个文件读不出来，确认是「催办」导出的备份（.json）"
+            return
+        }
+        restoreSource = url.lastPathComponent
+        restorePayload = p
+    }
+
+    private func performRestore() {
+        guard let p = restorePayload else { return }
+        restorePayload = nil
+        backupNotice = BackupStore.restore(payload: p)
+        refreshBackupStats()
+        refreshPhotoStats()
     }
 
     private func refreshPhotoStats() {
@@ -281,6 +433,25 @@ struct SettingsView: View {
                 store.updateSettingsPublic(s)
             }
         )
+    }
+
+    private func settingsBoolBinding(_ kp: WritableKeyPath<AppSettings, Bool>) -> Binding<Bool> {
+        Binding(
+            get: { store.settings[keyPath: kp] },
+            set: { v in
+                var s = store.settings
+                s[keyPath: kp] = v
+                store.updateSettingsPublic(s)
+            }
+        )
+    }
+
+    private var autoBackupBinding: Binding<Bool> {
+        settingsBoolBinding(\.autoBackup)
+    }
+
+    private var backupPhotosBinding: Binding<Bool> {
+        settingsBoolBinding(\.backupIncludePhotos)
     }
 
     private var keepAliveBinding: Binding<Bool> {        Binding(

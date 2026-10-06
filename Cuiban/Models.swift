@@ -179,12 +179,17 @@ struct AppSettings: Codable, Equatable {
     var keepAlive: Bool = true
     /// 外观：跟随系统 / 浅色 / 深色
     var theme: ThemeMode = .system
+    /// 自动备份到 App 本地（Documents/Backups）
+    var autoBackup: Bool = true
+    /// 备份文件里是否内嵌照片
+    var backupIncludePhotos: Bool = true
 
     init() {}
 
     // 容错解码：以后再加设置项，老版本存的设置也不会被清空
     enum CodingKeys: String, CodingKey {
-        case defaultIntervalMinutes, snoozeMinutes, soundEnabled, keepAlive, theme
+        case defaultIntervalMinutes, snoozeMinutes, soundEnabled, keepAlive, theme,
+             autoBackup, backupIncludePhotos
     }
 
     init(from decoder: Decoder) throws {
@@ -195,6 +200,8 @@ struct AppSettings: Codable, Equatable {
         soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? d.soundEnabled
         keepAlive = try c.decodeIfPresent(Bool.self, forKey: .keepAlive) ?? d.keepAlive
         theme = try c.decodeIfPresent(ThemeMode.self, forKey: .theme) ?? d.theme
+        autoBackup = try c.decodeIfPresent(Bool.self, forKey: .autoBackup) ?? d.autoBackup
+        backupIncludePhotos = try c.decodeIfPresent(Bool.self, forKey: .backupIncludePhotos) ?? d.backupIncludePhotos
     }
 }
 
@@ -237,6 +244,7 @@ final class TaskStore: ObservableObject {
         enc.outputFormatting = .prettyPrinted
         if let d = try? enc.encode(tasks) { try? d.write(to: tasksFile) }
         if let d = try? enc.encode(settings) { try? d.write(to: settingsFile) }
+        BackupStore.autoBackupIfNeeded(tasks: tasks, settings: settings)
     }
 
     func persistSettings() {
@@ -421,6 +429,21 @@ final class TaskStore: ObservableObject {
         save()
         AlarmCenter.shared.dismiss()
         NotificationScheduler.rescheduleAll(tasks: [], settings: settings, catchUp: true)
+    }
+
+    /// 用备份整体替换当前数据（照片缺失的会被跳过，不会报错）
+    func replaceAll(tasks newTasks: [TaskItem], settings newSettings: AppSettings) {
+        let oldPhotos = Set(tasks.flatMap { $0.photos })
+        let newPhotos = Set(newTasks.flatMap { $0.photos })
+        let gone = oldPhotos.subtracting(newPhotos)
+        if !gone.isEmpty {
+            AttachmentStore.delete(Array(gone))
+        }
+        tasks = newTasks
+        settings = newSettings
+        save()
+        AlarmCenter.shared.dismiss()
+        NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
     }
 
     /// 所有任务正在引用的照片文件名
