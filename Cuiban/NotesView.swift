@@ -396,7 +396,7 @@ struct NoteBodyEditor: UIViewRepresentable {
         tap.delegate = context.coordinator
         tap.cancelsTouchesInView = true
         tv.addGestureRecognizer(tap)
-        restyle(tv)
+        NoteBodyEditor.restyle(tv)
         bridge.record(tv)
         return tv
     }
@@ -409,7 +409,7 @@ struct NoteBodyEditor: UIViewRepresentable {
         // tv.text 里的附件占位符换回标记字符后再比较
         if Self.plainText(tv.attributedText) != text {
             tv.text = text
-            restyle(tv)
+            NoteBodyEditor.restyle(tv)
         }
     }
 
