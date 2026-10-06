@@ -129,8 +129,8 @@ struct MonthView: View {
         let items = entries[key] ?? []
         let isSelected = cal.isDate(d, inSameDayAs: selected)
         let isToday = cal.isDateInToday(d)
-        let badge = LunarCalendar.holidayBadge(key)
-        let sub = LunarCalendar.subtitle(key)
+        let badge = LunarCalendar.holidayBadge(for: key)
+        let sub = LunarCalendar.subtitle(for: key)
         // 放假日的数字用节日橙，一眼看出连休
         let numberColor: Color = isSelected
             ? .white
