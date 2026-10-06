@@ -11,21 +11,38 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
 
-      - name: Xcode version
-        run: xcodebuild -version
+      - name: Select newest Xcode
+        run: |
+          set -e
+          LATEST=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$LATEST" ]; then sudo xcode-select -s "$LATEST"; fi
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
 
-      - name: Generate assets (icons & alarm sound)
+      - name: Generate assets (icons and alarm sound)
         run: python3 tools/make_assets.py
 
       - name: Generate Xcode project
         run: xcodegen generate
+
+      - name: Ensure project format matches installed Xcode
+        run: |
+          set -e
+          MAJOR=$(xcodebuild -version | head -1 | sed -E 's/^Xcode ([0-9]+).*/\1/')
+          PBX=Cuiban.xcodeproj/project.pbxproj
+          echo "Xcode major version: $MAJOR"
+          grep -m1 objectVersion "$PBX" || true
+          if [ "$MAJOR" -lt 16 ]; then
+            echo "Downgrading project object version for Xcode < 16"
+            sed -i '' -E 's/objectVersion = [0-9]+;/objectVersion = 56;/' "$PBX"
+            grep -m1 objectVersion "$PBX" || true
+          fi
 
       - name: Build unsigned app
         run: |
