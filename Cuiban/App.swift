@@ -44,6 +44,9 @@ struct RootView: View {
             TabView {
                 TaskListView()
                     .tabItem { Label("清单", systemImage: "checklist") }
+                    .badge(store.overdue.count)
+                MonthView()
+                    .tabItem { Label("日历", systemImage: "calendar") }
                 SettingsView()
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
             }

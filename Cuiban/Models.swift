@@ -5,7 +5,7 @@ import UserNotifications
 // MARK: - 重复方式
 
 enum RepeatMode: String, Codable, CaseIterable, Identifiable {
-    case none, daily, weekly, weekday
+    case none, daily, weekly, weekday, monthly
 
     var id: String { rawValue }
 
@@ -15,6 +15,7 @@ enum RepeatMode: String, Codable, CaseIterable, Identifiable {
         case .daily: return "每天"
         case .weekly: return "每周"
         case .weekday: return "工作日"
+        case .monthly: return "每月"
         }
     }
 }
@@ -29,6 +30,8 @@ struct TaskItem: Identifiable, Codable, Equatable {
     /// 0 表示跟随全局默认
     var intervalMinutes: Int = 0
     var repeatMode: RepeatMode = .none
+    /// 每周重复时具体是哪几天（Calendar 口径：1=周日 ... 7=周六），空表示「每周同一天」
+    var weekdays: [Int] = []
     var isDone: Bool = false
     var doneAt: Date? = nil
     var createdAt: Date = Date()
@@ -49,6 +52,84 @@ struct TaskItem: Identifiable, Codable, Equatable {
 
     func resolvedInterval(_ fallback: Int) -> Int {
         intervalMinutes > 0 ? intervalMinutes : max(1, fallback)
+    }
+
+    /// 按重复规则往后走一步
+    func stepForward(from date: Date, calendar cal: Calendar = .current) -> Date {
+        switch repeatMode {
+        case .none:
+            return date
+        case .daily:
+            return cal.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86400)
+        case .weekday:
+            var d = date
+            repeat {
+                d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
+            } while cal.isDateInWeekend(d)
+            return d
+        case .weekly:
+            if weekdays.isEmpty {
+                return cal.date(byAdding: .weekOfYear, value: 1, to: date) ?? date.addingTimeInterval(604800)
+            }
+            let set = Set(weekdays)
+            var d = date
+            repeat {
+                d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
+            } while !set.contains(cal.component(.weekday, from: d))
+            return d
+        case .monthly:
+            return cal.date(byAdding: .month, value: 1, to: date) ?? date.addingTimeInterval(2592000)
+        }
+    }
+
+    /// 从当前到期时间开始，按重复规则推算出 `end` 之前的每一次日期（不含已完成的）
+    func projectedDates(until end: Date, maxCount: Int = 400) -> [Date] {
+        guard repeatMode != .none, !isDone else { return [] }
+        let cal = Calendar.current
+        let now = Date()
+        var d = effectiveDue
+        var guardCount = 0
+        while d <= now && guardCount < maxCount {
+            let next = stepForward(from: d, calendar: cal)
+            if next <= d { return [] }
+            d = next
+            guardCount += 1
+        }
+        var out: [Date] = []
+        while d < end && guardCount < maxCount {
+            out.append(d)
+            let next = stepForward(from: d, calendar: cal)
+            if next <= d { break }
+            d = next
+            guardCount += 1
+        }
+        return out
+    }
+}
+
+// 容错解码：老版本存下来的 JSON 缺少新加的字段也不会导致整个列表读不出来
+extension TaskItem {
+    enum CodingKeys: String, CodingKey {
+        case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays,
+             isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let d = TaskItem()
+        id = try c.decodeIfPresent(String.self, forKey: .id) ?? d.id
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? d.title
+        note = try c.decodeIfPresent(String.self, forKey: .note) ?? d.note
+        dueDate = try c.decodeIfPresent(Date.self, forKey: .dueDate) ?? d.dueDate
+        intervalMinutes = try c.decodeIfPresent(Int.self, forKey: .intervalMinutes) ?? d.intervalMinutes
+        repeatMode = try c.decodeIfPresent(RepeatMode.self, forKey: .repeatMode) ?? d.repeatMode
+        weekdays = try c.decodeIfPresent([Int].self, forKey: .weekdays) ?? d.weekdays
+        isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? d.isDone
+        doneAt = try c.decodeIfPresent(Date.self, forKey: .doneAt)
+        createdAt = try c.decodeIfPresent(Date.self, forKey: .createdAt) ?? d.createdAt
+        nagCount = try c.decodeIfPresent(Int.self, forKey: .nagCount) ?? d.nagCount
+        lastNagAt = try c.decodeIfPresent(Date.self, forKey: .lastNagAt)
+        snoozeUntil = try c.decodeIfPresent(Date.self, forKey: .snoozeUntil)
     }
 }
 
@@ -224,11 +305,20 @@ final class TaskStore: ObservableObject {
             case .daily:
                 d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
             case .weekly:
-                d = cal.date(byAdding: .weekOfYear, value: 1, to: d) ?? d.addingTimeInterval(604800)
+                if t.weekdays.isEmpty {
+                    d = cal.date(byAdding: .weekOfYear, value: 1, to: d) ?? d.addingTimeInterval(604800)
+                } else {
+                    let set = Set(t.weekdays)
+                    repeat {
+                        d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
+                    } while !set.contains(cal.component(.weekday, from: d))
+                }
             case .weekday:
                 repeat {
                     d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
                 } while cal.isDateInWeekend(d)
+            case .monthly:
+                d = cal.date(byAdding: .month, value: 1, to: d) ?? d.addingTimeInterval(2592000)
             }
             if d > Date() { return d }
         }

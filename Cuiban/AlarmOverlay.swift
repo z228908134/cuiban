@@ -49,6 +49,7 @@ struct AlarmOverlay: View {
                         .foregroundColor(.white.opacity(0.7))
                         .padding(.top, 6)
                         .multilineTextAlignment(.center)
+                        .lineLimit(5)
                 }
 
                 Spacer(minLength: 16)
