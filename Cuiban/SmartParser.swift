@@ -5,7 +5,9 @@ import Vision
 // MARK: - 识别结果
 
 struct SmartParseResult {
-    /// 识别出的提醒时间
+    /// 事件本身的时间（原文里写的时间）
+    var eventDate: Date? = nil
+    /// 提醒时间 = 事件时间前 5 分钟
     var dueDate: Date? = nil
     /// 识别出的重复规则
     var repeatMode: RepeatMode? = nil
@@ -35,7 +37,12 @@ struct SmartParseResult {
         if let e = errorText { return e }
         if !foundTimeOrRule { return "没识别到时间或重复规则，已把原文写进备注" }
         var parts: [String] = []
-        if let d = dueDate {
+        if let e = eventDate {
+            parts.append("事件 \(fmt(e, "M月d日 EEE HH:mm"))（\(relativeLabel(e, now: now))）")
+            if let d = dueDate {
+                parts.append("提前 \(max(0, Int(e.timeIntervalSince(d) / 60))) 分钟提醒")
+            }
+        } else if let d = dueDate {
             parts.append("\(fmt(d, "M月d日 EEE HH:mm"))（\(relativeLabel(d, now: now))）")
         } else {
             parts.append("时间未识别到")
@@ -50,7 +57,12 @@ struct SmartParseResult {
     func noteBlock(now: Date = Date()) -> String {
         var out: [String] = []
         out.append("【识别结果 · \(sourceLabel) · \(fmt(now, "MM-dd HH:mm"))】")
-        if let d = dueDate {
+        if let e = eventDate {
+            out.append("时间：\(fmt(e, "M月d日 EEE HH:mm"))（\(relativeLabel(e, now: now))）")
+            if let d = dueDate {
+                out.append("提醒：\(fmt(d, "M月d日 EEE HH:mm"))（事件前 \(max(0, Int(e.timeIntervalSince(d) / 60))) 分钟）")
+            }
+        } else if let d = dueDate {
             out.append("时间：\(fmt(d, "M月d日 EEE HH:mm"))（\(relativeLabel(d, now: now))）")
         } else {
             out.append("时间：没识别到，请手动确认")
@@ -319,7 +331,7 @@ enum SmartParser {
                     r.tips.append("原文的时间已经过去了，先按 30 分钟后处理")
                 }
             }
-            r.dueDate = d
+            setReminder(&r, event: d, now: now)
         } else if let day = dayStart {
             var comps = cal.dateComponents([.year, .month, .day], from: day)
             comps.hour = 9
@@ -330,8 +342,8 @@ enum SmartParser {
                 d = rollForward(d, mode: mode, weekdays: weekdays, cal: cal, now: now)
             }
             if d <= now { d = now.addingTimeInterval(60 * 60) }
-            r.dueDate = d
-            r.tips.append("原文只给了日期没给时间，默认按 09:00")
+            setReminder(&r, event: d, now: now)
+            r.tips.append("原文只给了日期没给时间，事件默认按 09:00")
         }
 
         r.repeatMode = mode
@@ -377,6 +389,21 @@ enum SmartParser {
             return raw.count >= 2 ? String(raw.prefix(24)) : nil
         }
         return String(s.prefix(24))
+    }
+
+    // MARK: 提醒时间换算
+
+    /// 提醒 = 事件时间前 5 分钟；事件快到了（5 分钟内）就把提醒退到 1 分钟后
+    private static func setReminder(_ r: inout SmartParseResult, event: Date, now: Date) {
+        r.eventDate = event
+        let rem = event.addingTimeInterval(-300)
+        if rem <= now && event > now {
+            r.dueDate = now.addingTimeInterval(60)
+            r.tips.append("事件就在 5 分钟内了，提醒先按 1 分钟后处理")
+        } else {
+            r.dueDate = rem
+            r.tips.append("提醒时间已设为事件开始前 5 分钟")
+        }
     }
 
     // MARK: 按重复规则往后推

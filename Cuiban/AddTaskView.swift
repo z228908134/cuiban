@@ -164,16 +164,28 @@ struct AddTaskView: View {
                 footer: Text(ai.ready
                     ? "在本机先解析一遍，再让 AI 复核一次，结果自动填到下面的时间和重复里。"
                     : "把想做的事打进去，比如「明天下午 3 点开会」，本机就能识别出时间。想去「设置 → AI 智能解析」填个 Key，识别会更准。")) {
-            HStack(spacing: 8) {
-                TextField("例如：下周一上午 10 点开周会，每周一次", text: $quickText)
-                    .submitLabel(.done)
-                    .onSubmit { runQuick() }
+            HStack(alignment: .top, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    if quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        Text("例如：下周一上午 10 点开周会，每周一次\n想写多长写多长，框会跟着长")
+                            .font(.system(size: 16))
+                            .foregroundColor(.secondary)
+                            .padding(.top, 11)
+                            .padding(.leading, 9)
+                            .allowsHitTesting(false)
+                    }
+                    GrowingTextView(text: $quickText)
+                }
 
-                if quickBusy {
-                    ProgressView().scaleEffect(0.8)
-                } else {
-                    Button("识别") { runQuick() }
-                        .disabled(quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                VStack(spacing: 6) {
+                    if quickBusy {
+                        ProgressView().scaleEffect(0.8)
+                            .padding(.top, 10)
+                    } else {
+                        Button("识别") { runQuick() }
+                            .disabled(quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .padding(.top, 8)
+                    }
                 }
             }
 
@@ -604,5 +616,42 @@ struct AddTaskView: View {
             return d.timeIntervalSinceNow
         }
         return 3600
+    }
+}
+
+// MARK: - 多行自高输入框
+
+/// iOS 15 的 TextField 不支持多行，用 UITextView 包一层。
+/// 关掉滚动后系统会按内容回报 intrinsicContentSize，输入框就跟着文字长高。
+struct GrowingTextView: UIViewRepresentable {
+    @Binding var text: String
+
+    func makeUIView(context: Context) -> UITextView {
+        let tv = UITextView()
+        tv.font = .systemFont(ofSize: 16)
+        tv.textColor = .label
+        tv.backgroundColor = .clear
+        tv.isScrollEnabled = false
+        tv.textContainerInset = UIEdgeInsets(top: 10, left: 4, bottom: 10, right: 4)
+        tv.delegate = context.coordinator
+        return tv
+    }
+
+    func updateUIView(_ tv: UITextView, context: Context) {
+        if tv.text != text {
+            tv.text = text
+            tv.invalidateIntrinsicContentSize()
+        }
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    final class Coordinator: NSObject, UITextViewDelegate {
+        var parent: GrowingTextView
+        init(_ p: GrowingTextView) { parent = p }
+
+        func textViewDidChange(_ tv: UITextView) {
+            parent.text = tv.text
+        }
     }
 }

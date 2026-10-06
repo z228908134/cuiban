@@ -163,7 +163,7 @@ struct SettingsView: View {
                     .foregroundColor(.red)
                 }
 
-                Section(header: Text("怎么用"), footer: Text("催办 v1.2 · 为 TrollStore 打造的免签名原生应用")) {
+                Section(header: Text("怎么用"), footer: Text("催办 v1.2.1 · 为 TrollStore 打造的免签名原生应用")) {
                     VStack(alignment: .leading, spacing: 8) {
                         tip("1. 新建任务：打一句话（明天下午 3 点开会），或选一张截图、拍张照")
                         tip("2. 识别出的时间和重复规则会自动填好，结论写进备注")

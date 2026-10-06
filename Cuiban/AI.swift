@@ -230,7 +230,14 @@ enum AIService {
         }
         if let due = dict["due"] as? String, !due.trimmingCharacters(in: .whitespaces).isEmpty {
             r.dueDate = parseDateTime(due)
-            if r.dueDate == nil { r.tips.append("AI 给的时间「\(due)」没读懂，请手动确认") }
+            if let ev = r.dueDate {
+                // AI 返回的是事件时间，提醒同样提前 5 分钟
+                r.eventDate = ev
+                r.dueDate = ev.addingTimeInterval(-300)
+                r.tips.append("提醒时间已设为事件开始前 5 分钟")
+            } else {
+                r.tips.append("AI 给的时间「\(due)」没读懂，请手动确认")
+            }
         }
         if let rep = dict["repeat"] as? String {
             r.repeatMode = RepeatMode(rawValue: rep.trimmingCharacters(in: .whitespaces).lowercased()) ?? RepeatMode.none
