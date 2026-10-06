@@ -161,11 +161,11 @@ final class TemplateStore: ObservableObject {
         ),
         NoteTemplate(
             name: "月刷卡任务",
-            body: "- [ ] 广发华为为 card 刷 1 万得 100 元\n- [ ] 广发 oppo card 刷 2 万返现 100 元\n- [ ] 广发车主卡刷 5000 任惠荟逛非加油类积分返现 50 元\n"
+            body: "⬜️ 广发华为为 card 刷 1 万得 100 元\n⬜️ 广发 oppo card 刷 2 万返现 100 元\n⬜️ 广发车主卡刷 5000 任惠荟逛非加油类积分返现 50 元\n"
         ),
         NoteTemplate(
             name: "每日待办",
-            body: "- [ ] \n- [ ] \n- [ ] \n"
+            body: "⬜️ \n⬜️ \n⬜️ \n"
         )
     ]
 }

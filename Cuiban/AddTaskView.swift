@@ -625,13 +625,11 @@ struct AddTaskView: View {
 
 /// iOS 15 的 TextField 不支持多行，用 UITextView 包一层。
 ///
-/// 高度方案（v1.5 起彻底重写）：不再依赖 UITextView 的
-/// intrinsicContentSize —— 那条路放进 Form 的自适应行高里，首次布局
-/// 宽度不对时会把行撑到整屏并卡住不再回缩。改为：
-///   1. 外层用 .frame(height:) 显式固定高度；
-///   2. 内部在文字变化 / 宽度变化时用 sizeThatFits 按「当前实际
-///      宽度」算出贴合内容的高度，写回 height binding。
-/// 空闲时最小 46pt（一行），字多就长高，删字就缩回，超过上限内部滚动。
+/// v1.5.1：宽度和高度都显式锁定。之前只锁高度，UITextView 的
+/// intrinsicContentSize 宽度是「整段文字的宽度」，SwiftUI 会顺着
+/// 这个理想宽度横向撑出去，导致文字不换行、直接顶出屏幕。
+/// 现在用 GeometryReader 拿到行内可用宽度，.frame(width:height:)
+/// 双向锁死，UITextView 在固定宽度内换行、高度按内容自增。
 struct GrowingTextView: View {
     @Binding var text: String
     var minHeight: CGFloat = 46
@@ -640,8 +638,13 @@ struct GrowingTextView: View {
     @State private var h: CGFloat = 0
 
     var body: some View {
-        Backing(text: $text, height: $h, minHeight: minHeight, maxHeight: maxHeight)
-            .frame(height: h == 0 ? minHeight : h)
+        GeometryReader { geo in
+            Backing(text: $text, height: $h, minHeight: minHeight, maxHeight: maxHeight)
+                .frame(width: geo.size.width,
+                       height: h == 0 ? minHeight : h,
+                       alignment: .topLeading)
+        }
+        .frame(height: h == 0 ? minHeight : h)
     }
 
     private struct Backing: UIViewRepresentable {
@@ -651,7 +654,7 @@ struct GrowingTextView: View {
         var maxHeight: CGFloat
 
         func makeUIView(context: Context) -> UITextView {
-            let tv = UITextView()
+            let tv = NoIntrinsicTextView()
             tv.font = .systemFont(ofSize: 16)
             tv.textColor = .label
             tv.backgroundColor = .clear
@@ -709,6 +712,13 @@ struct GrowingTextView: View {
                     self.parent.height = finalH
                 }
             }
+        }
+    }
+
+    /// 不向 SwiftUI 回报任何理想尺寸，尺寸完全由外层 .frame 决定
+    private final class NoIntrinsicTextView: UITextView {
+        override var intrinsicContentSize: CGSize {
+            CGSize(width: UIView.noIntrinsicMetric, height: UIView.noIntrinsicMetric)
         }
     }
 }

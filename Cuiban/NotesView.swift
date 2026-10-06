@@ -215,11 +215,13 @@ struct NoteEditorView: View {
 
                 barDivider
 
-                barIcon("checklist") { bridge.toggleLinePrefix("- [ ] ") }
+                barIcon("checklist") { bridge.toggleChecklist() }
                 barIcon("list.bullet") { bridge.toggleLinePrefix("- ") }
                 barIcon("list.number") { bridge.renumberList() }
                 barIcon("text.quote") { bridge.toggleLinePrefix("> ") }
                 barIcon("curlybraces") { bridge.wrap("`", "`") }
+                barIcon("increase.indent") { bridge.indent(shift: 1) }
+                barIcon("decrease.indent") { bridge.indent(shift: -1) }
 
                 barDivider
 
@@ -384,13 +386,16 @@ struct NoteEditorView: View {
 
 /// 正文用 UITextView（SwiftUI 的 TextEditor 拿不到选区，做不了格式工具）。
 /// bridge 负责从工具栏对正文做插入 / 包裹 / 行前缀操作。
+/// 编辑时实时套样式：勾选完成的待办整句加删除线并变灰。
 struct NoteBodyEditor: UIViewRepresentable {
     @Binding var text: String
     var bridge: TextEditBridge
 
+    static let baseFont = UIFont.systemFont(ofSize: 16)
+
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
-        tv.font = .systemFont(ofSize: 16)
+        tv.font = Self.baseFont
         tv.textColor = .label
         tv.backgroundColor = .clear
         tv.delegate = context.coordinator
@@ -401,6 +406,7 @@ struct NoteBodyEditor: UIViewRepresentable {
                 binding.wrappedValue = t
             }
         }
+        restyle(tv)
         return tv
     }
 
@@ -410,9 +416,61 @@ struct NoteBodyEditor: UIViewRepresentable {
         if tv.text != text {
             tv.text = text
         }
+        restyle(tv)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    /// 给正文上轻量样式：- [x] 行删除线变灰、# 标题加粗、> 引用变灰
+    func restyle(_ tv: UITextView) {
+        let content = tv.text ?? ""
+        let attr = NSMutableAttributedString(
+            string: content,
+            attributes: [.font: Self.baseFont, .foregroundColor: UIColor.label]
+        )
+        let ns = content as NSString
+        var loc = 0
+        while loc < ns.length {
+            let lr = ns.lineRange(for: NSRange(location: loc, length: 0))
+            let line = ns.substring(with: lr)
+            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+            if TextEditBridge.markerPrefix(in: trimmed, checked: true) != nil {
+                // 已勾选：只给勾选框后面的那段文字加删除线并置灰
+                if let p = TextEditBridge.markerPrefix(in: line, checked: true) {
+                    var bodyLen = lr.length - (p as NSString).length
+                    // 行尾换行不计入
+                    if bodyLen > 0, ns.character(at: lr.location + (p as NSString).length + bodyLen - 1) == 0x0A {
+                        bodyLen -= 1
+                    }
+                    if bodyLen > 0 {
+                        attr.addAttributes([
+                            .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                            .strikethroughColor: UIColor.secondaryLabel,
+                            .foregroundColor: UIColor.secondaryLabel
+                        ], range: NSRange(location: lr.location + (p as NSString).length, length: bodyLen))
+                    }
+                }
+            } else if trimmed.hasPrefix("# ") {
+                attr.addAttribute(
+                    .font,
+                    value: UIFont.systemFont(ofSize: 19, weight: .semibold),
+                    range: NSRange(location: lr.location, length: max(lr.length - 1, 0))
+                )
+            } else if trimmed.hasPrefix("> ") {
+                attr.addAttribute(
+                    .foregroundColor,
+                    value: UIColor.secondaryLabel,
+                    range: NSRange(location: lr.location, length: max(lr.length - 1, 0))
+                )
+            }
+            if lr.length == 0 { break }
+            loc = lr.location + lr.length
+        }
+        let sel = tv.selectedRange
+        tv.attributedText = attr
+        tv.typingAttributes = [.font: Self.baseFont, .foregroundColor: UIColor.label]
+        tv.selectedRange = sel
+    }
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: NoteBodyEditor
@@ -420,6 +478,7 @@ struct NoteBodyEditor: UIViewRepresentable {
 
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
+            parent.restyle(tv)
         }
     }
 }
@@ -495,9 +554,76 @@ final class TextEditBridge {
         finish(tv)
     }
 
+    /// 待办勾选开关：无勾选框 → 加未勾选方框；未勾选 → 已勾选；已勾选 → 取消。
+    /// 用 ⬜️ / ✅ 这种真正的方框字符（不是 - [ ] 原文），勾上后那一段文字
+    /// 自动加删除线并变灰，见 NoteBodyEditor.restyle
+    func toggleChecklist() {
+        guard let tv = textView else { return }
+        let ns = tv.text as NSString
+        let lr = lineRange(tv, ns: ns)
+        let comps = ns.substring(with: lr).components(separatedBy: "\n")
+        let out = comps.map { line -> String in
+            if line.isEmpty { return line }
+            if let p = Self.markerPrefix(in: line, checked: true) {
+                return Self.uncheckedMark + String(line.dropFirst(p.count))
+            }
+            if let p = Self.markerPrefix(in: line, checked: false) {
+                return Self.checkedMark + String(line.dropFirst(p.count))
+            }
+            // 去掉其它列表前缀再挂勾选框，避免「- ⬜️ 」叠加
+            var s = line
+            for p in ["- ", "> ", "1. ", "2. ", "3. "] where s.hasPrefix(p) {
+                s = String(s.dropFirst(p.count))
+                break
+            }
+            return Self.uncheckedMark + s
+        }
+        let joined = out.joined(separator: "\n")
+        tv.text = ns.replacingCharacters(in: lr, with: joined)
+        tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
+        finish(tv)
+    }
+
+    /// 勾选 / 未勾选的标记（同时兼容旧的 - [x] / - [ ] 写法）
+    static let checkedMark = "✅ "
+    static let uncheckedMark = "⬜️ "
+
+    static func markerPrefix(in line: String, checked: Bool) -> String? {
+        let candidates = checked
+            ? ["✅ ", "- [x] ", "- [X] ", "☑️ "]
+            : ["⬜️ ", "- [ ] ", "☐ "]
+        for c in candidates where line.hasPrefix(c) { return c }
+        return nil
+    }
+
     func copyAll() {
         guard let tv = textView else { return }
         UIPasteboard.general.string = tv.text
+    }
+
+    /// 缩进：shift = 1 加一层缩进，shift = -1 减一层（每层 4 个空格）
+    func indent(shift: Int) {
+        guard let tv = textView else { return }
+        let pad = "    "
+        let ns = tv.text as NSString
+        let lr = lineRange(tv, ns: ns)
+        let comps = ns.substring(with: lr).components(separatedBy: "\n")
+        let out = comps.map { line -> String in
+            if line.isEmpty { return line }
+            if shift > 0 {
+                return pad + line
+            }
+            var s = line
+            for p in [pad, "  ", "\t"] where s.hasPrefix(p) {
+                s = String(s.dropFirst(p.count))
+                break
+            }
+            return s
+        }
+        let joined = out.joined(separator: "\n")
+        tv.text = ns.replacingCharacters(in: lr, with: joined)
+        tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
+        finish(tv)
     }
 
     // MARK: 私有
