@@ -622,12 +622,12 @@ struct AddTaskView: View {
 // MARK: - 多行自高输入框
 
 /// iOS 15 的 TextField 不支持多行，用 UITextView 包一层。
-/// 关掉滚动后系统会按内容回报 intrinsicContentSize，输入框就跟着文字长高。
+/// 高度随内容自动增长；宽度交给 SwiftUI 按剩余空间分配（自动换行的关键）。
 struct GrowingTextView: UIViewRepresentable {
     @Binding var text: String
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let tv = WrappingTextView()
         tv.font = .systemFont(ofSize: 16)
         tv.textColor = .label
         tv.backgroundColor = .clear
@@ -652,6 +652,28 @@ struct GrowingTextView: UIViewRepresentable {
 
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
+            tv.invalidateIntrinsicContentSize()
+        }
+    }
+
+    /// UITextView 默认把「整段文字的宽度」当作理想宽度回报，放进 HStack 就会
+    /// 横向撑开、不换行。把宽度改成 noIntrinsicMetric（不确定），SwiftUI 就会
+    /// 按可用宽度给布局；高度按内容回报，实现自增。
+    private final class WrappingTextView: UITextView {
+        private var lastHeight: CGFloat = 0
+
+        override var intrinsicContentSize: CGSize {
+            CGSize(width: UIView.noIntrinsicMetric,
+                   height: contentSize.height + textContainerInset.top + textContainerInset.bottom)
+        }
+
+        override func layoutSubviews() {
+            super.layoutSubviews()
+            let h = contentSize.height + textContainerInset.top + textContainerInset.bottom
+            if abs(h - lastHeight) > 0.5 {
+                lastHeight = h
+                invalidateIntrinsicContentSize()
+            }
         }
     }
 }
