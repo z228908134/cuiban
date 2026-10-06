@@ -164,10 +164,12 @@ struct AddTaskView: View {
                 footer: Text(ai.ready
                     ? "在本机先解析一遍，再让 AI 复核一次，结果自动填到下面的时间和重复里。"
                     : "把想做的事打进去，比如「明天下午 3 点开会」，本机就能识别出时间。想去「设置 → AI 智能解析」填个 Key，识别会更准。")) {
-            HStack(alignment: .top, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                // 输入框独占整行宽度，保证文字自动换行；
+                // 识别按钮放下一行，永远不会被挤掉
                 ZStack(alignment: .topLeading) {
                     if quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("例如：下周一上午 10 点开周会，每周一次\n想写多长写多长，框会跟着长")
+                        Text("例如：下周一上午 10 点开周会，每周一次")
                             .font(.system(size: 16))
                             .foregroundColor(.secondary)
                             .padding(.top, 11)
@@ -177,16 +179,16 @@ struct AddTaskView: View {
                     GrowingTextView(text: $quickText)
                 }
 
-                VStack(spacing: 6) {
+                HStack(spacing: 12) {
+                    Spacer()
                     if quickBusy {
                         ProgressView().scaleEffect(0.8)
-                            .padding(.top, 10)
                     } else {
                         Button("识别") { runQuick() }
                             .disabled(quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                            .padding(.top, 8)
                     }
                 }
+                .padding(.bottom, 4)
             }
 
             if quickBusy {
@@ -661,15 +663,16 @@ struct GrowingTextView: UIViewRepresentable {
     /// 按可用宽度给布局；高度按内容回报，实现自增。
     private final class WrappingTextView: UITextView {
         private var lastHeight: CGFloat = 0
+        private let minHeight: CGFloat = 44
 
         override var intrinsicContentSize: CGSize {
-            CGSize(width: UIView.noIntrinsicMetric,
-                   height: contentSize.height + textContainerInset.top + textContainerInset.bottom)
+            let h = max(minHeight, contentSize.height + textContainerInset.top + textContainerInset.bottom)
+            return CGSize(width: UIView.noIntrinsicMetric, height: h)
         }
 
         override func layoutSubviews() {
             super.layoutSubviews()
-            let h = contentSize.height + textContainerInset.top + textContainerInset.bottom
+            let h = max(minHeight, contentSize.height + textContainerInset.top + textContainerInset.bottom)
             if abs(h - lastHeight) > 0.5 {
                 lastHeight = h
                 invalidateIntrinsicContentSize()

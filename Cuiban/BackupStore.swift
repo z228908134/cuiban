@@ -12,6 +12,8 @@ struct BackupPayload: Codable {
     var settings: AppSettings = AppSettings()
     /// 照片文件名 -> JPEG base64（关闭「包含照片」时为空字典）
     var photos: [String: String] = [:]
+    /// 笔记（v1.4 起包含）
+    var notes: [NoteItem]? = nil
 }
 
 /// 一份本地备份的条目（设置页展示用）
@@ -121,6 +123,7 @@ enum BackupStore {
             }
             payload.photos = photos
         }
+        payload.notes = NoteStore.shared.notes
         return payload
     }
 
@@ -145,7 +148,11 @@ enum BackupStore {
             }
         }
         TaskStore.shared.replaceAll(tasks: payload.tasks, settings: payload.settings)
+        if let ns = payload.notes {
+            NoteStore.shared.replaceAll(ns)
+        }
         var s = "已恢复 \(payload.tasks.count) 个任务"
+        if let ns = payload.notes, !ns.isEmpty { s += "、\(ns.count) 条笔记" }
         if restoredPhotos > 0 { s += "、\(restoredPhotos) 张照片" }
         if payload.tasks.isEmpty { s += "（备份里没有任务，相当于清空）" }
         return s

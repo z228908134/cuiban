@@ -33,6 +33,24 @@ func human(_ seconds: TimeInterval) -> String {
 let brandColor = Color(red: 0.97, green: 0.33, blue: 0.18)
 let alarmRed = Color(red: 0.76, green: 0.16, blue: 0.10)
 
+// MARK: - 右下角悬浮新建按钮
+
+struct FabButton: View {
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "plus")
+                .font(.system(size: 26, weight: .medium))
+                .foregroundColor(.white)
+                .frame(width: 56, height: 56)
+                .background(Circle().fill(brandColor))
+                .shadow(color: Color.black.opacity(0.28), radius: 6, x: 0, y: 3)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 // MARK: - 根视图
 
 struct RootView: View {
@@ -47,6 +65,8 @@ struct RootView: View {
                     .badge(store.overdue.count)
                 MonthView()
                     .tabItem { Label("日历", systemImage: "calendar") }
+                NotesView()
+                    .tabItem { Label("笔记", systemImage: "note.text") }
                 SettingsView()
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
             }
@@ -80,6 +100,7 @@ struct CuibanApp: App {
             RootView()
                 .environmentObject(store)
                 .environmentObject(alarm)
+                .environmentObject(NoteStore.shared)
         }
         .onChange(of: scenePhase) { phase in
             switch phase {

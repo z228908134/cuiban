@@ -13,6 +13,7 @@ struct MonthView: View {
     @State private var anchor: Date = Date()
     @State private var selected: Date = Calendar.current.startOfDay(for: Date())
     @State private var editing: TaskItem? = nil
+    @State private var showingAdd = false
 
     private let cal = Calendar.current
     private let weekNames = ["日", "一", "二", "三", "四", "五", "六"]
@@ -28,6 +29,11 @@ struct MonthView: View {
             }
             .navigationTitle("日历")
             .navigationBarTitleDisplayMode(.inline)
+            .overlay(alignment: .bottomTrailing) {
+                FabButton { showingAdd = true }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 16)
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -41,6 +47,9 @@ struct MonthView: View {
             }
             .sheet(item: $editing) { t in
                 AddTaskView(editing: t)
+            }
+            .sheet(isPresented: $showingAdd) {
+                AddTaskView()
             }
         }
         .navigationViewStyle(.stack)
@@ -95,11 +104,11 @@ struct MonthView: View {
                 if let d = days[i] {
                     dayCell(d)
                 } else {
-                    Color.clear.frame(height: 46)
+                    Color.clear.frame(height: 58)
                 }
             }
         }
-        .padding(.horizontal, 6)
+        .padding(.horizontal, 4)
         .padding(.bottom, 8)
     }
 
@@ -109,7 +118,7 @@ struct MonthView: View {
             ForEach(dots.indices, id: \.self) { i in
                 Circle()
                     .fill(dotColor(dots[i]))
-                    .frame(width: 5, height: 5)
+                    .frame(width: 4.5, height: 4.5)
             }
         }
         .frame(height: 6)
@@ -120,23 +129,47 @@ struct MonthView: View {
         let items = entries[key] ?? []
         let isSelected = cal.isDate(d, inSameDayAs: selected)
         let isToday = cal.isDateInToday(d)
+        let badge = LunarCalendar.holidayBadge(key)
+        let sub = LunarCalendar.subtitle(key)
+        // 放假日的数字用节日橙，一眼看出连休
+        let numberColor: Color = isSelected
+            ? .white
+            : (badge == "休" ? LunarCalendar.festivalColor : (isToday ? brandColor : .primary))
 
         return Button {
             selected = key
         } label: {
-            VStack(spacing: 3) {
-                Text(fmt(d, "d"))
-                    .font(.system(size: 15, weight: isToday || isSelected ? .bold : .regular))
-                    .foregroundColor(isSelected ? .white : (isToday ? brandColor : .primary))
-                    .frame(width: 28, height: 28)
-                    .background(
-                        Circle().fill(isSelected ? brandColor : (isToday ? brandColor.opacity(0.13) : Color.clear))
-                    )
+            VStack(spacing: 2) {
+                ZStack(alignment: .topTrailing) {
+                    Text("\(cal.component(.day, from: d))")
+                        .font(.system(size: 15, weight: isSelected || isToday ? .bold : .regular))
+                        .foregroundColor(numberColor)
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle().fill(isSelected ? brandColor
+                                          : (isToday ? brandColor.opacity(0.13) : Color.clear))
+                        )
+
+                    if let b = badge {
+                        Text(b)
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundColor(.white)
+                            .frame(width: 13, height: 13)
+                            .background(Circle().fill(b == "休" ? LunarCalendar.restColor
+                                                       : LunarCalendar.workColor))
+                            .offset(x: 6, y: -4)
+                    }
+                }
+
+                Text(sub.text)
+                    .font(.system(size: 9))
+                    .foregroundColor(isSelected ? .white.opacity(0.85) : sub.color)
+                    .lineLimit(1)
 
                 dotsView(items)
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 46)
+            .frame(height: 58)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -168,7 +201,7 @@ struct MonthView: View {
                 .padding(.bottom, 6)
 
                 if items.isEmpty {
-                    Text("这一天还没有安排，点右上角 + 新建，或在「清单」里把任务挪过来。")
+                    Text("这一天还没有安排，点右下角 + 新建，或在「清单」里把任务挪过来。")
                         .font(.system(size: 13))
                         .foregroundColor(.secondary)
                         .padding(.horizontal, 16)

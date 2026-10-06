@@ -110,8 +110,11 @@ enum AttachmentStore {
         let w = image.size.width
         let h = image.size.height
         let m = max(w, h)
-        guard m > maxSide, m > 0 else { return image }
-        let scale = maxSide / m
+        // 需要缩放，或方向不是正（相机拍的照片带旋转标记）时，都用渲染器重画一遍：
+        // draw(in:) 会按 imageOrientation 把像素「摆正」，落盘的 JPEG 就是正确的方向
+        let needsNormalize = image.imageOrientation != .up
+        guard (m > maxSide || needsNormalize), m > 0 else { return image }
+        let scale = m > maxSide ? maxSide / m : 1
         let target = CGSize(width: max(1, w * scale), height: max(1, h * scale))
         let format = UIGraphicsImageRendererFormat.default()
         format.scale = 1

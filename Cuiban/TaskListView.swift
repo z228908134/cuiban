@@ -53,15 +53,10 @@ struct TaskListView: View {
             }
             .listStyle(.insetGrouped)
             .navigationTitle("催办")
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button {
-                        showingAdd = true
-                    } label: {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.system(size: 24))
-                    }
-                }
+            .overlay(alignment: .bottomTrailing) {
+                FabButton { showingAdd = true }
+                    .padding(.trailing, 20)
+                    .padding(.bottom, 24)
             }
             .sheet(isPresented: $showingAdd) {
                 AddTaskView()
@@ -80,7 +75,7 @@ struct TaskListView: View {
                 .font(.system(size: 34))
                 .foregroundColor(.secondary)
             Text("还没有任务").font(.system(size: 15, weight: .medium))
-            Text("点右上角 + 添加，到点不完成就一路催你")
+            Text("点右下角 + 添加，到点不完成就一路催你")
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
         }
