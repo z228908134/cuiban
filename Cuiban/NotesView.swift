@@ -192,13 +192,13 @@ struct NoteEditorView: View {
         }
     }
 
-    // MARK: 格式工具栏（滴答清单样式：细线图标 + 分组竖线 + 更多菜单）
+    // MARK: 格式工具栏（对齐滴答清单 input_md_* 全套：撤销/重做/标题/加粗/斜体/下划线/删除线/高亮/待办/列表/缩进/引用/代码/链接/时间/分割线）
 
     private var formatBar: some View {
         HStack(spacing: 0) {
             barIcon("photo.on.rectangle") { photoSource = .library }
             barIcon("clock") { bridge.insert(fmt(Date(), "M月d日 HH:mm ")) }
-            barIcon("keyboard.chevron.compact.down") { hideKeyboard() }
+            barIcon("arrow.uturn.backward") { bridge.undo() }
 
             barDivider
 
@@ -218,14 +218,15 @@ struct NoteEditorView: View {
         .padding(.horizontal, 2)
     }
 
-    /// 右端 ∨：低频功能收进菜单，主栏保持滴答同款的干净一排
+    /// 右端 ∨：其余全部功能收进菜单（滴答同款折叠）
     private var moreMenu: some View {
         Menu {
+            Button { bridge.redo() } label: { Label("重做", systemImage: "arrow.uturn.forward") }
+            Divider()
             Button { bridge.wrap("*", "*") } label: { Label("斜体", systemImage: "textformat.italic") }
             Button { bridge.wrap("__", "__") } label: { Label("下划线", systemImage: "underline") }
             Button { bridge.toggleLinePrefix("> ") } label: { Label("引用", systemImage: "text.quote") }
             Button { bridge.wrap("`", "`") } label: { Label("代码", systemImage: "curlybraces") }
-            Button { bridge.insert("#") } label: { Label("编号 #", systemImage: "number") }
             Button { bridge.wrap("[", "](https://)") } label: { Label("链接", systemImage: "link") }
             Button { bridge.insert("\n———\n") } label: { Label("分割线", systemImage: "minus") }
             Divider()
@@ -237,6 +238,7 @@ struct NoteEditorView: View {
             if ImagePicker.cameraAvailable {
                 Button { photoSource = .camera } label: { Label("拍照", systemImage: "camera") }
             }
+            Button { hideKeyboard() } label: { Label("收起键盘", systemImage: "keyboard.chevron.compact.down") }
         } label: {
             Image(systemName: "chevron.down")
                 .font(.system(size: 13, weight: .medium))
@@ -363,6 +365,8 @@ struct NoteBodyEditor: UIViewRepresentable {
     var bridge: TextEditBridge
 
     static let baseFont = UIFont.systemFont(ofSize: 16)
+    /// 附件占位字符（TextKit 只认这个字符渲染 NSTextAttachment）
+    static let attachChar: Character = "\u{FFFC}"
 
     func makeUIView(context: Context) -> UITextView {
         let tv = UITextView()
@@ -377,7 +381,12 @@ struct NoteBodyEditor: UIViewRepresentable {
                 binding.wrappedValue = t
             }
         }
-        // 点勾选框直接打勾 / 取消（微信备忘录式交互）
+        // 工具栏操作后重新套样式（附件/删除线/标题）
+        bridge.refreshUI = { [weak self, weak tv] in
+            guard let self = self, let tv = tv else { return }
+            self.restyle(tv)
+        }
+        // 点勾选框直接打勾 / 取消（滴答式交互）
         // 注意：必须挂 delegate，只有点在勾选框上时才接管这次点击，
         // 否则会连「点正文唤起键盘」一起抢掉，导致进不去编辑状态
         let tap = UITapGestureRecognizer(
@@ -388,15 +397,17 @@ struct NoteBodyEditor: UIViewRepresentable {
         tap.cancelsTouchesInView = true
         tv.addGestureRecognizer(tap)
         restyle(tv)
+        bridge.record(tv)
         return tv
     }
 
     func updateUIView(_ tv: UITextView, context: Context) {
         context.coordinator.parent = self
         bridge.textView = tv
-        // 只在文字真的被外部改动时才重排样式。
-        // 每次刷新都重设 attributedText 会把输入法的组合状态冲掉（打不进字）。
-        if tv.text != text {
+        // 拼音组合期间什么都不动（否则打断输入）
+        guard tv.markedTextRange == nil else { return }
+        // tv.text 里的附件占位符换回标记字符后再比较
+        if Self.plainText(tv.attributedText) != text {
             tv.text = text
             restyle(tv)
         }
@@ -404,37 +415,66 @@ struct NoteBodyEditor: UIViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
+    // MARK: 纯文本 <-> 附件
+
+    /// 把 UITextView 的富文本还原成「干净纯文本」：
+    /// 勾选框附件占位符换回对应的标记字符（长度 1:1），外部附件丢弃。
+    static func plainText(_ attr: NSAttributedString) -> String {
+        let ns = attr.string as NSString
+        guard ns.range(of: "\u{FFFC}").location != NSNotFound else { return attr.string }
+        var out = ""
+        var cursor = 0
+        var search = NSRange(location: 0, length: ns.length)
+        while true {
+            let r = ns.range(of: "\u{FFFC}", options: [], range: search)
+            if r.location == NSNotFound { break }
+            out += ns.substring(with: NSRange(location: cursor, length: r.location - cursor))
+            if let att = attr.attribute(.attachment, at: r.location, effectiveRange: nil) as? NSTextAttachment {
+                if att.image === CheckboxArt.checked {
+                    out += TextEditBridge.checkedMarkRaw
+                } else if att.image === CheckboxArt.unchecked {
+                    out += TextEditBridge.uncheckedMarkRaw
+                }
+            }
+            cursor = r.location + r.length
+            search = NSRange(location: cursor, length: ns.length - cursor)
+        }
+        out += ns.substring(with: NSRange(location: cursor, length: ns.length - cursor))
+        return out
+    }
+
     /// 给正文上轻量样式：勾选行删除线变灰、# 标题加粗、> 引用变灰。
+    /// 勾选框标记字符（私有区）显示时替换成 U+FFFC + 附件图片（1:1，光标不乱）。
     /// 打字期间（输入法有 markedText 组合状态）绝不重设 attributedText，
     /// 否则组合串会被清掉、字打不进去。
     func restyle(_ tv: UITextView) {
         guard tv.markedTextRange == nil else { return }
         let content = tv.text ?? ""
+        // 标记字符 -> 附件占位符（等长替换）
+        let display = content
+            .replacingOccurrences(of: TextEditBridge.checkedMarkRaw, with: String(Self.attachChar))
+            .replacingOccurrences(of: TextEditBridge.uncheckedMarkRaw, with: String(Self.attachChar))
         let attr = NSMutableAttributedString(
-            string: content,
+            string: display,
             attributes: [.font: Self.baseFont, .foregroundColor: UIColor.label]
         )
-        let ns = content as NSString
+        // display 上加属性；文本判断用原始 content（标记字符还在）
+        let cns = content as NSString
         var loc = 0
-        while loc < ns.length {
-            let lr = ns.lineRange(for: NSRange(location: loc, length: 0))
-            let line = ns.substring(with: lr)
+        while loc < cns.length {
+            let lr = cns.lineRange(for: NSRange(location: loc, length: 0))
+            let line = cns.substring(with: lr)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // 新写法的勾选框字符：用画好的圆角方框渲染（字符保留在原位，纯文本不丢）
-            if line.hasPrefix(TextEditBridge.checkedMark)
-                || line.hasPrefix(TextEditBridge.uncheckedMark) {
-                let isChecked = line.hasPrefix(TextEditBridge.checkedMark)
+            // 行首的标记字符挂上对应方框图片（display 里它已是 U+FFFC）
+            if line.hasPrefix(TextEditBridge.checkedMarkRaw)
+                || line.hasPrefix(TextEditBridge.uncheckedMarkRaw) {
                 let att = NSTextAttachment()
-                att.image = isChecked ? CheckboxArt.checked : CheckboxArt.unchecked
+                att.image = line.hasPrefix(TextEditBridge.checkedMarkRaw)
+                    ? CheckboxArt.checked : CheckboxArt.unchecked
                 att.bounds = CGRect(x: 0, y: -3, width: 17, height: 17)
                 attr.addAttribute(.attachment, value: att,
                                   range: NSRange(location: lr.location, length: 1))
-                attr.addAttribute(
-                    .font,
-                    value: Self.baseFont,
-                    range: NSRange(location: lr.location, length: 2)
-                )
             }
 
             if TextEditBridge.markerPrefix(in: trimmed, checked: true) != nil {
@@ -442,7 +482,7 @@ struct NoteBodyEditor: UIViewRepresentable {
                 if let p = TextEditBridge.markerPrefix(in: line, checked: true) {
                     var bodyLen = lr.length - (p as NSString).length
                     // 行尾换行不计入
-                    if bodyLen > 0, ns.character(at: lr.location + (p as NSString).length + bodyLen - 1) == 0x0A {
+                    if bodyLen > 0, cns.character(at: lr.location + (p as NSString).length + bodyLen - 1) == 0x0A {
                         bodyLen -= 1
                     }
                     if bodyLen > 0 {
@@ -480,12 +520,20 @@ struct NoteBodyEditor: UIViewRepresentable {
         init(_ p: NoteBodyEditor) { parent = p }
 
         func textViewDidChange(_ tv: UITextView) {
-            parent.text = tv.text
-            // 拼音/中文候选还没上屏时不重排样式，避免打断输入
+            // 拼音/中文候选还没上屏时不动文本存储，避免打断输入
+            guard tv.markedTextRange == nil else {
+                if let t = tv.text { if parent.text != t { parent.text = t } }
+                return
+            }
+            let clean = NoteBodyEditor.plainText(tv.attributedText)
+            if parent.text != clean {
+                parent.text = clean
+            }
+            parent.bridge.record(tv)
             parent.restyle(tv)
         }
 
-        /// 组合输入结束（候选上屏）后再补一次样式
+        /// 编辑结束（键盘收起）后再补一次样式
         func textViewDidEndEditing(_ tv: UITextView) {
             parent.restyle(tv)
         }
@@ -500,8 +548,11 @@ struct NoteBodyEditor: UIViewRepresentable {
         }
 
         private static func tapHitsCheckbox(tap: UITapGestureRecognizer, tv: UITextView) -> Bool {
-            let ns = tv.text as NSString
+            let attr = tv.attributedText ?? NSAttributedString()
+            let ns = attr.string as NSString
             guard ns.length > 0 else { return false }
+            // 等长校验：有外部附件时放弃接管，避免索引错位
+            guard (NoteBodyEditor.plainText(attr) as NSString).length == ns.length else { return false }
             let p = tap.location(in: tv)
             let idx = tv.layoutManager.characterIndex(
                 for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
@@ -509,24 +560,31 @@ struct NoteBodyEditor: UIViewRepresentable {
             guard idx >= 0, idx < ns.length else { return false }
             let lr = ns.lineRange(for: NSRange(location: idx, length: 0))
             let line = ns.substring(with: lr)
-            let mark = TextEditBridge.markerPrefix(in: line, checked: true)
-                ?? TextEditBridge.markerPrefix(in: line, checked: false)
-            guard let mark = mark else { return false }
+            // 勾选框是行首第一个字符（附件占位符或标记字符）
+            guard line.hasPrefix(String(NoteBodyEditor.attachChar))
+                || line.hasPrefix(TextEditBridge.checkedMarkRaw)
+                || line.hasPrefix(TextEditBridge.uncheckedMarkRaw) else { return false }
             let rel = idx - lr.location
-            return rel >= 0 && rel < (mark as NSString).length
+            return rel == 0
         }
 
         @objc func handleTap(_ g: UITapGestureRecognizer) {
             guard let tv = parent.bridge.textView else { return }
-            let ns = tv.text as NSString
+            let attr = tv.attributedText ?? NSAttributedString()
+            let ns = attr.string as NSString
             guard ns.length > 0 else { return }
+            let plain = NoteBodyEditor.plainText(attr)
+            guard (plain as NSString).length == ns.length else { return }
             let p = g.location(in: tv)
             let idx = tv.layoutManager.characterIndex(
                 for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
             )
             guard idx >= 0, idx < ns.length else { return }
-            let lr = ns.lineRange(for: NSRange(location: idx, length: 0))
-            let line = ns.substring(with: lr)
+            let plainNS = plain as NSString
+            let lr = plainNS.lineRange(
+                for: NSRange(location: min(idx, plainNS.length - 1), length: 0)
+            )
+            let line = plainNS.substring(with: lr)
             var newLine: String? = nil
             if let u = TextEditBridge.markerPrefix(in: line, checked: false) {
                 newLine = TextEditBridge.checkedMark + String(line.dropFirst(u.count))
@@ -534,11 +592,21 @@ struct NoteBodyEditor: UIViewRepresentable {
                 newLine = TextEditBridge.uncheckedMark + String(line.dropFirst(c.count))
             }
             guard let nl = newLine else { return }
-            tv.text = ns.replacingCharacters(in: lr, with: nl)
+            let newAll = plainNS.replacingCharacters(in: lr, with: nl)
+            tv.text = newAll
+            // 光标保持在这一行内的相对位置
+            let rel = idx - lr.location
+            let newNS = newAll as NSString
+            let lineLen = (nl as NSString).length
+            tv.selectedRange = NSRange(
+                location: min(lr.location + min(max(rel, 0), max(lineLen - 1, 0)), newNS.length),
+                length: 0
+            )
             parent.restyle(tv)
-            if parent.text != tv.text {
-                parent.text = tv.text
+            if parent.text != newAll {
+                parent.text = newAll
             }
+            parent.bridge.record(tv)
         }
     }
 }
@@ -581,10 +649,62 @@ enum CheckboxArt {
 final class TextEditBridge {
     weak var textView: UITextView?
     var onEdited: ((String) -> Void)? = nil
+    /// 工具栏操作完成后让编辑器重新套样式（附件/删除线/标题）
+    var refreshUI: (() -> Void)? = nil
+
+    /// 标记字符本体（不含尾随空格）；存储与比较用
+    static let checkedMarkRaw = "\u{E001}"
+    static let uncheckedMarkRaw = "\u{E000}"
+
+    // MARK: 撤销 / 重做（自维护历史，工具栏操作也能撤销）
+
+    private var history: [(text: String, sel: NSRange)] = []
+    private var histIdx: Int = -1
+    private var suppressRecord = false
+
+    /// 记录当前状态到历史（输入变化、工具栏操作后都调用）
+    func record(_ tv: UITextView) {
+        guard !suppressRecord else { return }
+        let t = NoteBodyEditor.plainText(tv.attributedText)
+        let sel = tv.selectedRange
+        if histIdx >= 0, histIdx < history.count, history[histIdx].text == t {
+            history[histIdx] = (t, sel)
+            return
+        }
+        if histIdx + 1 < history.count {
+            history.removeSubrange((histIdx + 1)...)
+        }
+        history.append((t, sel))
+        if history.count > 200 { history.removeFirst() }
+        histIdx = history.count - 1
+    }
+
+    func undo() {
+        guard let tv = textView, histIdx > 0 else { return }
+        histIdx -= 1
+        applyHistory(tv)
+    }
+
+    func redo() {
+        guard let tv = textView, histIdx + 1 < history.count else { return }
+        histIdx += 1
+        applyHistory(tv)
+    }
+
+    private func applyHistory(_ tv: UITextView) {
+        let (t, sel) = history[histIdx]
+        suppressRecord = true
+        tv.text = t
+        tv.selectedRange = sel
+        suppressRecord = false
+        refreshUI?()
+        onEdited?(t)
+    }
 
     /// 光标处插入一段文字
     func insert(_ s: String) {
         guard let tv = textView else { return }
+        syncPlain(tv)
         let ns = tv.text as NSString
         let r = tv.selectedRange
         tv.text = ns.replacingCharacters(in: r, with: s)
@@ -595,6 +715,7 @@ final class TextEditBridge {
     /// 把选中文字包进前后缀；没有选中就插入一对并停在中间
     func wrap(_ prefix: String, _ suffix: String) {
         guard let tv = textView else { return }
+        syncPlain(tv)
         let ns = tv.text as NSString
         let r = tv.selectedRange
         let sel = ns.substring(with: r)
@@ -609,6 +730,7 @@ final class TextEditBridge {
     /// 行首前缀开关：选中的行都有前缀就去掉，否则加上
     func toggleLinePrefix(_ prefix: String) {
         guard let tv = textView else { return }
+        syncPlain(tv)
         let ns = tv.text as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
@@ -627,6 +749,7 @@ final class TextEditBridge {
     /// 有序列表：已编号则去掉编号，否则逐行重新编号
     func renumberList() {
         guard let tv = textView else { return }
+        syncPlain(tv)
         let ns = tv.text as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
@@ -649,10 +772,10 @@ final class TextEditBridge {
     }
 
     /// 待办勾选开关：无勾选框 → 加未勾选方框；未勾选 → 已勾选；已勾选 → 取消。
-    /// 用 ⬜️ / ✅ 这种真正的方框字符（不是 - [ ] 原文），勾上后那一段文字
-    /// 自动加删除线并变灰，见 NoteBodyEditor.restyle
+    /// 勾上后那一段文字自动加删除线并变灰，见 NoteBodyEditor.restyle
     func toggleChecklist() {
         guard let tv = textView else { return }
+        syncPlain(tv)
         let ns = tv.text as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
@@ -664,7 +787,7 @@ final class TextEditBridge {
             if let p = Self.markerPrefix(in: line, checked: false) {
                 return Self.checkedMark + String(line.dropFirst(p.count))
             }
-            // 去掉其它列表前缀再挂勾选框，避免「- ⬜️ 」叠加
+            // 去掉其它列表前缀再挂勾选框，避免「- □ 」叠加
             var s = line
             for p in ["- ", "> ", "1. ", "2. ", "3. "] where s.hasPrefix(p) {
                 s = String(s.dropFirst(p.count))
@@ -678,11 +801,9 @@ final class TextEditBridge {
         finish(tv)
     }
 
-    /// 勾选 / 未勾选的标记。
-    /// 用私有区字符存储（显示时由 restyle 换成画好的方框附件），
-    /// 纯文本内容不丢；同时兼容旧的 - [x] / - [ ] / ⬜️ / ✅ 写法
-    static let checkedMark = "\u{E001} "
-    static let uncheckedMark = "\u{E000} "
+    /// 勾选 / 未勾选的标记（含尾随空格；同时兼容旧的 - [x] / - [ ] 写法）
+    static var checkedMark: String { checkedMarkRaw + " " }
+    static var uncheckedMark: String { uncheckedMarkRaw + " " }
 
     static func markerPrefix(in line: String, checked: Bool) -> String? {
         let candidates = checked
@@ -717,14 +838,23 @@ final class TextEditBridge {
         }.joined(separator: "\n")
     }
 
+    /// 展示用：把标记字符换成普通符号（列表摘要等纯文本场景）
+    static func displayFriendly(_ s: String) -> String {
+        s.replacingOccurrences(of: checkedMark, with: "☑ ")
+            .replacingOccurrences(of: uncheckedMark, with: "☐ ")
+            .replacingOccurrences(of: checkedMarkRaw, with: "☑")
+            .replacingOccurrences(of: uncheckedMarkRaw, with: "☐")
+    }
+
     func copyAll() {
         guard let tv = textView else { return }
-        UIPasteboard.general.string = tv.text
+        UIPasteboard.general.string = NoteBodyEditor.plainText(tv.attributedText)
     }
 
     /// 缩进：shift = 1 加一层缩进，shift = -1 减一层（每层 4 个空格）
     func indent(shift: Int) {
         guard let tv = textView else { return }
+        syncPlain(tv)
         let pad = "    "
         let ns = tv.text as NSString
         let lr = lineRange(tv, ns: ns)
@@ -749,7 +879,17 @@ final class TextEditBridge {
 
     // MARK: 私有
 
+    /// 把 UITextView 里的附件占位符还原成标记字符，让后续字符串操作按纯文本进行
+    private func syncPlain(_ tv: UITextView) {
+        let plain = NoteBodyEditor.plainText(tv.attributedText)
+        if plain != tv.text {
+            tv.text = plain
+        }
+    }
+
     private func finish(_ tv: UITextView) {
+        refreshUI?()
+        record(tv)
         onEdited?(tv.text)
     }
 

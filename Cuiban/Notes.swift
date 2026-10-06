@@ -14,14 +14,15 @@ struct NoteItem: Identifiable, Codable, Equatable {
     var displayTitle: String {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !t.isEmpty { return t }
-        let firstLine = body
+        let firstLine = TextEditBridge.displayFriendly(body)
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .components(separatedBy: .newlines).first ?? ""
         return firstLine.isEmpty ? "无标题" : String(firstLine.prefix(20))
     }
 
     var snippet: String {
-        let b = body.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = TextEditBridge.displayFriendly(body)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
         guard !b.isEmpty else { return "（正文为空）" }
         return b.replacingOccurrences(of: "\n", with: " ")
     }
@@ -45,7 +46,12 @@ final class NoteStore: ObservableObject {
     private func load() {
         if let data = try? Data(contentsOf: file),
            let list = try? JSONDecoder().decode([NoteItem].self, from: data) {
-            notes = list
+            // 旧版本勾选框写法（⬜️/✅/- [ ]）迁移成新标记
+            notes = list.map { n in
+                var m = n
+                m.body = TextEditBridge.migrate(m.body)
+                return m
+            }
         }
     }
 
