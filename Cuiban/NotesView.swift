@@ -182,19 +182,14 @@ struct NoteEditorView: View {
     private var bodyEditor: some View {
         ZStack(alignment: .topLeading) {
             if bodyText.isEmpty {
-                HStack(spacing: 0) {
-                    Text("记录你的想法，或")
-                    Button {
-                        showTemplates = true
-                    } label: {
-                        Text("使用模板")
-                            .underline()
-                    }
-                }
-                .font(.system(size: 16))
-                .foregroundColor(.secondary)
-                .padding(.top, 10)
-                .padding(.leading, 18)
+                // 纯展示的占位（不拦点击，点它也能唤起键盘）；
+                // 打开模板走右上角「使用模板」或工具栏的模板按钮
+                Text("记录你的想法，或使用模板")
+                    .font(.system(size: 16))
+                    .foregroundColor(.secondary)
+                    .padding(.top, 10)
+                    .padding(.leading, 18)
+                    .allowsHitTesting(false)
             }
             NoteBodyEditor(text: $bodyText, bridge: bridge)
                 .padding(.horizontal, 12)
@@ -407,11 +402,14 @@ struct NoteBodyEditor: UIViewRepresentable {
             }
         }
         // 点勾选框直接打勾 / 取消（微信备忘录式交互）
+        // 注意：必须挂 delegate，只有点在勾选框上时才接管这次点击，
+        // 否则会连「点正文唤起键盘」一起抢掉，导致进不去编辑状态
         let tap = UITapGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleTap(_:))
         )
-        tap.cancelsTouchesInView = false
+        tap.delegate = context.coordinator
+        tap.cancelsTouchesInView = true
         tv.addGestureRecognizer(tap)
         restyle(tv)
         return tv
@@ -420,16 +418,21 @@ struct NoteBodyEditor: UIViewRepresentable {
     func updateUIView(_ tv: UITextView, context: Context) {
         context.coordinator.parent = self
         bridge.textView = tv
+        // 只在文字真的被外部改动时才重排样式。
+        // 每次刷新都重设 attributedText 会把输入法的组合状态冲掉（打不进字）。
         if tv.text != text {
             tv.text = text
+            restyle(tv)
         }
-        restyle(tv)
     }
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
-    /// 给正文上轻量样式：- [x] 行删除线变灰、# 标题加粗、> 引用变灰
+    /// 给正文上轻量样式：勾选行删除线变灰、# 标题加粗、> 引用变灰。
+    /// 打字期间（输入法有 markedText 组合状态）绝不重设 attributedText，
+    /// 否则组合串会被清掉、字打不进去。
     func restyle(_ tv: UITextView) {
+        guard tv.markedTextRange == nil else { return }
         let content = tv.text ?? ""
         let attr = NSMutableAttributedString(
             string: content,
@@ -485,6 +488,12 @@ struct NoteBodyEditor: UIViewRepresentable {
 
         func textViewDidChange(_ tv: UITextView) {
             parent.text = tv.text
+            // 拼音/中文候选还没上屏时不重排样式，避免打断输入
+            parent.restyle(tv)
+        }
+
+        /// 组合输入结束（候选上屏）后再补一次样式
+        func textViewDidEndEditing(_ tv: UITextView) {
             parent.restyle(tv)
         }
 
