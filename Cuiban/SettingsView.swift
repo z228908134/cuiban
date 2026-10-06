@@ -4,6 +4,10 @@ struct SettingsView: View {
     @EnvironmentObject var store: TaskStore
     @ObservedObject private var ai = AIStore.shared
 
+    /// 版本号从 Info.plist 动态读取，升级后自动跟随
+    private static let appVersion =
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+
     @State private var aiTesting = false
     @State private var aiTestResult: String? = nil
     @State private var photoCount = 0
@@ -221,7 +225,7 @@ struct SettingsView: View {
                     .foregroundColor(.red)
                 }
 
-                Section(header: Text("怎么用"), footer: Text("催办 v1.4.0 · 为 TrollStore 打造的免签名原生应用")) {
+                Section(header: Text("怎么用"), footer: Text("催办 v\(Self.appVersion) · 为 TrollStore 打造的免签名原生应用")) {
                     VStack(alignment: .leading, spacing: 8) {
                         tip("1. 新建任务：打一句话（明天下午 3 点开会），或选一张截图、拍张照")
                         tip("2. 识别出的时间和重复规则会自动填好，结论写进备注")
