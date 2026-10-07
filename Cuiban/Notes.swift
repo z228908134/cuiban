@@ -13,20 +13,90 @@ struct NoteItem: Identifiable, Codable, Equatable {
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 
+    /// 有标题就用标题，没标题就拿正文里第一条「有意义的行」当标题。
+    /// 过滤掉勾选框标记行、纯 URL 行、纯日期行——这些当标题看着像乱码。
     var displayTitle: String {
         let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !t.isEmpty { return t }
-        let firstLine = TextEditBridge.displayFriendly(body)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .components(separatedBy: .newlines).first ?? ""
-        return firstLine.isEmpty ? "无标题" : String(firstLine.prefix(20))
+        let lines = NoteSummary.meaningfulLines(body)
+        return lines.first.map { String($0.prefix(24)) } ?? "无标题"
     }
 
+    /// 摘要：只取正文里有意义的行，最多两行，不再把整段压成一行。
+    /// 有标题时正文全部可用；无标题时第一行已被当作标题，摘要从第二行起，避免重复。
     var snippet: String {
-        let b = TextEditBridge.displayFriendly(body)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !b.isEmpty else { return "（正文为空）" }
-        return b.replacingOccurrences(of: "\n", with: " ")
+        var lines = NoteSummary.meaningfulLines(body)
+        guard !lines.isEmpty else { return "（正文为空）" }
+        if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            lines = Array(lines.dropFirst())
+            if lines.isEmpty { return "（无更多内容）" }
+        }
+        return String(lines.prefix(2).joined(separator: " ").prefix(80))
+    }
+}
+
+// MARK: - 笔记摘要挑选
+
+/// 从笔记正文里挑出「值得显示在列表上」的行。
+/// 之前是把整段正文的换行全替换成空格，结果勾选框标记、日期、URL 全挤在一行像乱码。
+enum NoteSummary {
+    /// 勾选框标记字符（显示层已转成 ☐ / ☑，这里直接按字符判断）
+    private static let marks: Set<Character> = ["\u{2610}", "\u{2611}", "\u{2612}", "\u{2B1C}"]
+
+    /// 去掉行首的勾选框标记，保留正文
+    private static func stripMark(_ line: String) -> String {
+        var s = Substring(line)
+        while let first = s.first {
+            if first == " " || first == "\t" { s = s.dropFirst() }
+            else if marks.contains(first) { s = s.dropFirst() }
+            else { break }
+        }
+        return String(s).trimmingCharacters(in: .whitespaces)
+    }
+
+    /// 这一行是不是纯链接（http/https 开头且没别的实质内容）
+    private static func isBareURL(_ s: String) -> Bool {
+        let low = s.lowercased()
+        guard low.hasPrefix("http://") || low.hasPrefix("https://")
+                || low.hasPrefix("www.") else { return false }
+        // 去掉链接本身后如果还剩实质文字，就不算纯链接
+        let rest = s.replacingOccurrences(
+            of: #"https?://[^\s]+|www\.[^\s]+"#,
+            with: "",
+            options: .regularExpression
+        ).trimmingCharacters(in: .whitespaces)
+        return rest.isEmpty
+    }
+
+    /// 这一行是不是纯日期 / 时间（例：10月7日 09:11、2026-10-07 09:11:22、2026年10月7日 星期三）
+    ///
+    /// 不用正则逐字符匹配：`星期` / `礼拜` 在 Swift 里是**多个字素簇**（一整个汉字），
+    /// 正则的字符类会按 unicode scalar 处理，很容易漏判。改成「逐个 token 判断」更稳。
+    private static func isBareDate(_ s: String) -> Bool {
+        // 允许出现的词与符号：数字、数字汉字（星期三里的「三」）、年月日时分秒、
+        // 星期/周、上午下午、日期分隔符
+        let allowedWords = ["年", "月", "日", "号", "点", "时", "分", "秒",
+                            "星期", "礼拜", "周",
+                            "一", "二", "三", "四", "五", "六", "七", "八", "九", "十",
+                            "上午", "下午", "晚上", "凌晨"]
+        var rest = s
+        for w in allowedWords {
+            rest = rest.replacingOccurrences(of: w, with: "")
+        }
+        // 剩下的只允许数字和日期分隔符出现
+        let okChars = Set("0123456789 -/:.、,，")
+        let leftovers = rest.filter { !okChars.contains($0) }
+        // 至少要有一个数字，否则「月月」之类不算日期
+        return leftovers.isEmpty && rest.contains(where: { $0.isNumber })
+    }
+
+    /// 笔记正文 → 有意义的行（已剥掉勾选框标记、滤掉纯 URL / 纯日期 / 空行）
+    static func meaningfulLines(_ body: String) -> [String] {
+        TextEditBridge.displayFriendly(body)
+            .components(separatedBy: .newlines)
+            .map { stripMark($0) }
+            .filter { !$0.isEmpty }
+            .filter { !isBareURL($0) && !isBareDate($0) }
     }
 }
 
