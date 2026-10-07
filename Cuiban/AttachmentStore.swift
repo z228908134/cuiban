@@ -185,8 +185,9 @@ struct PhotoViewer: View {
     let titles: [String]
     @State private var index: Int
     @Environment(\.presentationMode) private var presentationMode
-    /// 下拉关闭：跟手的位移与背景变暗程度
+    /// 下拉时图片跟手的纵向位移（只用于跟手，关闭时不用它做动画）
     @State private var dragY: CGFloat = 0
+    /// 已经决定关闭：屏蔽后续手势，避免和系统关闭动画打架
     @State private var dismissing = false
 
     init(images: [UIImage], titles: [String] = [], start: Int = 0) {
@@ -196,21 +197,22 @@ struct PhotoViewer: View {
     }
 
     private func closeViewer() {
+        dismissing = true
         presentationMode.wrappedValue.dismiss()
     }
 
     var body: some View {
         ZStack {
-            // 背景：下拉时露出下面的内容，越往下越透明
-            Color.black.opacity(1 - min(Double(dragY) / 900.0, 0.75))
-                .ignoresSafeArea()
+            // 背景固定纯黑。之前跟着 dragY 改透明度，会和图片位移不同步，
+            // 松手的瞬间两者不同帧，看上去就是「闪一下」。
+            Color.black.ignoresSafeArea()
 
             if images.isEmpty {
                 Text("图片读不出来了")
                     .foregroundColor(.white.opacity(0.8))
             } else {
                 VStack(spacing: 10) {
-                    // 顶部提示条：第几张 / 怎么关闭
+                    // 顶部提示条：第几张 / 怎么关闭。开始下拉就淡出，别跟着一起飞
                     HStack(spacing: 5) {
                         if images.count > 1 {
                             Text("\(index + 1) / \(images.count)")
@@ -225,6 +227,8 @@ struct PhotoViewer: View {
                     .padding(.vertical, 5)
                     .background(Capsule().fill(Color.white.opacity(0.16)))
                     .padding(.top, 6)
+                    .opacity(1 - min(Double(dragY) / 70.0, 1))
+                    .animation(.easeOut(duration: 0.12), value: dragY)
 
                     TabView(selection: $index) {
                         ForEach(images.indices, id: \.self) { i in
@@ -246,9 +250,8 @@ struct PhotoViewer: View {
                     }
                     Spacer(minLength: 12)
                 }
-                // 只有图片区域响应下拉，TabView 仍能正常左右翻页
+                // 跟手：只跟手指，自身不做任何动画（动画由 gesture 里统一控制）
                 .offset(y: dragY)
-                .scaleEffect(1 - min(dragY / 4000.0, 0.06), anchor: .center)
             }
 
             // 右上角关闭按钮：实心深色圆 + 白色描边 + 阴影，压在任何图片上都看得清
@@ -270,33 +273,34 @@ struct PhotoViewer: View {
                 .padding(.top, 8)
                 Spacer()
             }
-            // 关闭按钮不参与下拉手势，点哪儿都能关
-            .allowsHitTesting(true)
+            // 关闭按钮固定不跟手、不淡出，保持稳定可点
+            .opacity(1 - min(Double(dragY) / 260.0, 0.85))
         }
         .contentShape(Rectangle())
         .simultaneousGesture(dismissGesture)
-        .statusBarHidden(true)
     }
 
-    /// 下滑关闭：跟手位移，松手按距离/速度决定是否关
+    /// 下滑关闭：拖动时严格跟手；松手够长就直接交给系统关闭动画收尾。
+    /// 关键：**不在这里自己播"飞出去"的动画**——fullScreenCover 关闭本身带系统动画，
+    /// 自己再播一段就会和它错帧，表现为闪一下。
     private var dismissGesture: some Gesture {
-        DragGesture()
+        DragGesture(minimumDistance: 12)
             .onChanged { v in
                 guard !dismissing else { return }
-                // 只认向下；如果图片只有一张，往上也能拉（露出下方内容）
+                // 横向分量明显更大时交给 TabView 翻页，不算下滑
+                guard abs(v.translation.height) > abs(v.translation.width) else { return }
+                // 用 translation 而不是累计增量：手指中途反向也能跟回来，不会累积漂移
                 dragY = max(0, v.translation.height)
             }
             .onEnded { v in
                 guard !dismissing else { return }
-                // 位移够大或下滑够快就关
+                // 位移够大、或快速下滑（预测终点够远）就关闭
                 if v.translation.height > 110
                     || (v.translation.height > 24
                         && v.predictedEndTranslation.height > 260) {
-                    dismissing = true
-                    withAnimation(.easeOut(duration: 0.18)) { dragY = 900 }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { closeViewer() }
+                    closeViewer()   // 直接关，位置保持不动，由系统动画平滑收尾
                 } else {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.86)) {
                         dragY = 0
                     }
                 }
