@@ -8,6 +8,8 @@ struct NoteItem: Identifiable, Codable, Equatable {
     var body: String = ""
     /// 附在笔记上的照片（AttachmentsStore 里的文件名）
     var photos: [String] = []
+    /// 富文本样式片段 JSON（NoteStyle 数组：加粗/斜体/下划线/删除线/高亮/等宽）
+    var styleData: String? = nil
     var createdAt: Date = Date()
     var updatedAt: Date = Date()
 

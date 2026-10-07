@@ -1,5 +1,31 @@
 import SwiftUI
 
+// MARK: - 样式模型
+
+/// 富文本样式片段：按字符区间存储，随笔记一起持久化。
+/// 滴答式真样式（不是往文字里插 ** 之类的符号）。
+struct NoteStyle: Codable, Equatable {
+    var l: Int = 0      // 起点（UTF-16 坐标）
+    var n: Int = 0      // 长度
+    var b: Bool = false // 加粗
+    var i: Bool = false // 斜体
+    var u: Bool = false // 下划线
+    var s: Bool = false // 删除线
+    var h: Bool = false // 高亮底色
+    var m: Bool = false // 等宽（代码）
+
+    static func encode(_ list: [NoteStyle]) -> String {
+        guard let d = try? JSONEncoder().encode(list) else { return "[]" }
+        return String(data: d, encoding: .utf8) ?? "[]"
+    }
+
+    static func decode(_ s: String?) -> [NoteStyle] {
+        guard let d = s?.data(using: .utf8),
+              let list = try? JSONDecoder().decode([NoteStyle].self, from: d) else { return [] }
+        return list
+    }
+}
+
 // MARK: - 笔记列表
 
 struct NotesView: View {
@@ -102,9 +128,12 @@ struct NoteEditorView: View {
     @State private var title: String
     @State private var bodyText: String
     @State private var photos: [String]
+    @State private var styleData: String
+    /// 当前选区生效的样式（工具栏按钮高亮用）
+    @State private var activeTraits: Set<String> = []
     @State private var photoSource: PhotoSource? = nil
     @State private var showTemplates = false
-    @State private var bridge = TextEditBridge()
+    @State private var bridge: TextEditBridge
 
     private enum PhotoSource: Int, Identifiable {
         case library, camera
@@ -116,6 +145,10 @@ struct NoteEditorView: View {
         _title = State(initialValue: note?.title ?? "")
         _bodyText = State(initialValue: TextEditBridge.migrate(note?.body ?? ""))
         _photos = State(initialValue: note?.photos ?? [])
+        _styleData = State(initialValue: note?.styleData ?? "[]")
+        let br = TextEditBridge()
+        br.styles = NoteStyle.decode(note?.styleData)
+        _bridge = State(initialValue: br)
     }
 
     var body: some View {
@@ -178,8 +211,7 @@ struct NoteEditorView: View {
     private var bodyEditor: some View {
         ZStack(alignment: .topLeading) {
             if bodyText.isEmpty {
-                // 纯展示的占位（不拦点击，点它也能唤起键盘）；
-                // 打开模板走右上角「使用模板」或工具栏的模板按钮
+                // 纯展示的占位（不拦点击，点它也能唤起键盘）
                 Text("记录你的想法，或使用模板")
                     .font(.system(size: 16))
                     .foregroundColor(.secondary)
@@ -187,12 +219,13 @@ struct NoteEditorView: View {
                     .padding(.leading, 18)
                     .allowsHitTesting(false)
             }
-            NoteBodyEditor(text: $bodyText, bridge: bridge)
+            NoteBodyEditor(text: $bodyText, styleData: $styleData,
+                           activeTraits: $activeTraits, bridge: bridge)
                 .padding(.horizontal, 12)
         }
     }
 
-    // MARK: 格式工具栏（对齐滴答清单 input_md_* 全套：撤销/重做/标题/加粗/斜体/下划线/删除线/高亮/待办/列表/缩进/引用/代码/链接/时间/分割线）
+    // MARK: 格式工具栏（对齐滴答清单：真样式开关，选中时按钮高亮）
 
     private var formatBar: some View {
         HStack(spacing: 0) {
@@ -203,9 +236,9 @@ struct NoteEditorView: View {
             barDivider
 
             barText("H") { bridge.toggleLinePrefix("# ") }
-            barText("B") { bridge.wrap("**", "**") }
-            barText("S", strike: true) { bridge.wrap("~~", "~~") }
-            barIcon("highlighter") { bridge.wrap("==", "==") }
+            barText("B", active: activeTraits.contains("b")) { bridge.toggle("b") }
+            barText("S", strike: true, active: activeTraits.contains("s")) { bridge.toggle("s") }
+            barIcon("highlighter", active: activeTraits.contains("h")) { bridge.toggle("h") }
 
             barDivider
 
@@ -223,10 +256,10 @@ struct NoteEditorView: View {
         Menu {
             Button { bridge.redo() } label: { Label("重做", systemImage: "arrow.uturn.forward") }
             Divider()
-            Button { bridge.wrap("*", "*") } label: { Label("斜体", systemImage: "textformat.italic") }
-            Button { bridge.wrap("__", "__") } label: { Label("下划线", systemImage: "underline") }
+            Button { bridge.toggle("i") } label: { Label("斜体", systemImage: "textformat.italic") }
+            Button { bridge.toggle("u") } label: { Label("下划线", systemImage: "underline") }
+            Button { bridge.toggle("m") } label: { Label("代码", systemImage: "curlybraces") }
             Button { bridge.toggleLinePrefix("> ") } label: { Label("引用", systemImage: "text.quote") }
-            Button { bridge.wrap("`", "`") } label: { Label("代码", systemImage: "curlybraces") }
             Button { bridge.wrap("[", "](https://)") } label: { Label("链接", systemImage: "link") }
             Button { bridge.insert("\n———\n") } label: { Label("分割线", systemImage: "minus") }
             Divider()
@@ -253,22 +286,22 @@ struct NoteEditorView: View {
             .frame(width: 0.7, height: 18)
     }
 
-    private func barIcon(_ system: String, action: @escaping () -> Void) -> some View {
+    private func barIcon(_ system: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.system(size: 17, weight: .regular))
-                .foregroundColor(.primary.opacity(0.8))
+                .font(.system(size: 17, weight: active ? .semibold : .regular))
+                .foregroundColor(active ? .accentColor : .primary.opacity(0.8))
                 .frame(maxWidth: .infinity, minHeight: 40)
         }
         .buttonStyle(.plain)
     }
 
-    private func barText(_ s: String, strike: Bool = false, action: @escaping () -> Void) -> some View {
+    private func barText(_ s: String, strike: Bool = false, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(s)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.system(size: 15, weight: active ? .bold : .semibold))
                 .strikethrough(strike)
-                .foregroundColor(.primary.opacity(0.8))
+                .foregroundColor(active ? .accentColor : .primary.opacity(0.8))
                 .frame(maxWidth: .infinity, minHeight: 40)
         }
         .buttonStyle(.plain)
@@ -336,6 +369,7 @@ struct NoteEditorView: View {
         n.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         n.body = bodyText
         n.photos = photos
+        n.styleData = styleData
 
         // 被删掉的照片顺手从磁盘清掉
         let old = Set(note?.photos ?? [])
@@ -358,10 +392,13 @@ struct NoteEditorView: View {
 // MARK: - 正文编辑控件
 
 /// 正文用 UITextView（SwiftUI 的 TextEditor 拿不到选区，做不了格式工具）。
-/// bridge 负责从工具栏对正文做插入 / 包裹 / 行前缀操作。
-/// 编辑时实时套样式：勾选完成的待办整句加删除线并变灰。
+/// bridge 负责从工具栏对正文做真样式 / 插入 / 行前缀操作。
+/// 样式（加粗/斜体/下划线/删除线/高亮/等宽）按字符区间存进 NoteStyle，
+/// 显示时套到 attributedText 上，保存时随笔记持久化。
 struct NoteBodyEditor: UIViewRepresentable {
     @Binding var text: String
+    @Binding var styleData: String
+    @Binding var activeTraits: Set<String>
     var bridge: TextEditBridge
 
     static let baseFont = UIFont.systemFont(ofSize: 16)
@@ -381,14 +418,26 @@ struct NoteBodyEditor: UIViewRepresentable {
                 binding.wrappedValue = t
             }
         }
-        // 工具栏操作后重新套样式（附件/删除线/标题）
-        bridge.refreshUI = { [weak tv] in
-            guard let tv = tv else { return }
-            NoteBodyEditor.restyle(tv)
+        let styleBinding = $styleData
+        bridge.onStylesChanged = { s in
+            if styleBinding.wrappedValue != s {
+                styleBinding.wrappedValue = s
+            }
+        }
+        let activeBinding = $activeTraits
+        bridge.onSelectionChanged = { t in
+            if activeBinding.wrappedValue != t {
+                activeBinding.wrappedValue = t
+            }
+        }
+        // 工具栏操作后重新套样式
+        bridge.refreshUI = { [weak tv, weak bridge] in
+            guard let tv = tv, let bridge = bridge else { return }
+            NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         }
         // 点勾选框直接打勾 / 取消（滴答式交互）
-        // 注意：必须挂 delegate，只有点在勾选框上时才接管这次点击，
-        // 否则会连「点正文唤起键盘」一起抢掉，导致进不去编辑状态
+        // 必须挂 delegate，只有点在勾选框上时才接管这次点击，
+        // 否则会连「点正文唤起键盘」一起抢掉
         let tap = UITapGestureRecognizer(
             target: context.coordinator,
             action: #selector(Coordinator.handleTap(_:))
@@ -396,7 +445,7 @@ struct NoteBodyEditor: UIViewRepresentable {
         tap.delegate = context.coordinator
         tap.cancelsTouchesInView = true
         tv.addGestureRecognizer(tap)
-        NoteBodyEditor.restyle(tv)
+        NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         bridge.record(tv)
         return tv
     }
@@ -409,7 +458,7 @@ struct NoteBodyEditor: UIViewRepresentable {
         // tv.text 里的附件占位符换回标记字符后再比较
         if Self.plainText(tv.attributedText) != text {
             tv.text = text
-            NoteBodyEditor.restyle(tv)
+            NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         }
     }
 
@@ -443,11 +492,41 @@ struct NoteBodyEditor: UIViewRepresentable {
         return out
     }
 
-    /// 给正文上轻量样式：勾选行删除线变灰、# 标题加粗、> 引用变灰。
-    /// 勾选框标记字符（私有区）显示时替换成 U+FFFC + 附件图片（1:1，光标不乱）。
-    /// 打字期间（输入法有 markedText 组合状态）绝不重设 attributedText，
-    /// 否则组合串会被清掉、字打不进去。
-    static func restyle(_ tv: UITextView) {
+    // MARK: 样式渲染
+
+    /// 由样式特征生成字体（加粗/斜体/等宽可叠加）
+    static func fontFor(bold: Bool, italic: Bool, mono: Bool) -> UIFont {
+        var d = baseFont.fontDescriptor
+        if mono { d = d.withDesign(.monospaced) ?? d }
+        var traits: UIFontDescriptor.SymbolicTraits = []
+        if bold { traits.insert(.traitBold) }
+        if italic { traits.insert(.traitItalic) }
+        if let nd = d.withSymbolicTraits(traits) { d = nd }
+        return UIFont(descriptor: d, size: baseFont.pointSize)
+    }
+
+    /// 给某个样式集合生成属性字典（打字属性也复用）
+    static func attrsFor(_ traits: Set<String>) -> [NSAttributedString.Key: Any] {
+        var tp: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: UIColor.label]
+        if traits.contains("b") || traits.contains("i") || traits.contains("m") {
+            tp[.font] = fontFor(bold: traits.contains("b"),
+                                italic: traits.contains("i"),
+                                mono: traits.contains("m"))
+        }
+        if traits.contains("u") { tp[.underlineStyle] = NSUnderlineStyle.single.rawValue }
+        if traits.contains("s") { tp[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
+        if traits.contains("h") {
+            tp[.backgroundColor] = UIColor.systemYellow.withAlphaComponent(0.35)
+        }
+        return tp
+    }
+
+    /// 给正文上样式：
+    /// 1. 勾选框标记字符（私有区）替换成 U+FFFC + 附件图片（1:1，光标不乱）
+    /// 2. 勾选完成的待办整句删除线变灰、# 标题加粗、> 引用变灰（行级）
+    /// 3. 富文本样式（加粗/斜体/下划线/删除线/高亮/等宽）按区间套上
+    /// 打字期间（输入法有 markedText 组合状态）绝不重设 attributedText。
+    static func restyle(_ tv: UITextView, styles: [NoteStyle], pending: Set<String>) {
         guard tv.markedTextRange == nil else { return }
         let content = tv.text ?? ""
         // 标记字符 -> 附件占位符（等长替换）
@@ -509,9 +588,28 @@ struct NoteBodyEditor: UIViewRepresentable {
             if lr.length == 0 { break }
             loc = lr.location + lr.length
         }
+
+        // 富文本样式（真加粗/斜体/下划线/删除线/高亮/等宽）
+        for st in styles {
+            guard st.n > 0, st.l >= 0, st.l < attr.length else { continue }
+            let len = min(st.n, attr.length - st.l)
+            guard len > 0 else { continue }
+            let rng = NSRange(location: st.l, length: len)
+            if st.b || st.i || st.m {
+                attr.addAttribute(.font, value: fontFor(bold: st.b, italic: st.i, mono: st.m), range: rng)
+            }
+            if st.u { attr.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
+            if st.s { attr.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
+            if st.h {
+                attr.addAttribute(.backgroundColor,
+                                  value: UIColor.systemYellow.withAlphaComponent(0.35),
+                                  range: rng)
+            }
+        }
+
         let sel = tv.selectedRange
         tv.attributedText = attr
-        tv.typingAttributes = [.font: Self.baseFont, .foregroundColor: UIColor.label]
+        tv.typingAttributes = attrsFor(pending)
         tv.selectedRange = sel
     }
 
@@ -526,16 +624,27 @@ struct NoteBodyEditor: UIViewRepresentable {
                 return
             }
             let clean = NoteBodyEditor.plainText(tv.attributedText)
+            let old = parent.text
+            // 增删文字后平移/裁剪样式区间；新输入落上「下一个输入」的样式
+            parent.bridge.adjustStyles(old: old, new: clean)
+            parent.bridge.captureTyping(old: old, new: clean)
             if parent.text != clean {
                 parent.text = clean
             }
             parent.bridge.record(tv)
-            NoteBodyEditor.restyle(tv)
+            NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
+                                   pending: parent.bridge.pendingTraits)
+        }
+
+        /// 光标/选区变化：更新「下一个输入」样式 + 工具栏高亮态
+        func textViewDidChangeSelection(_ tv: UITextView) {
+            parent.bridge.syncSelectionUI(tv)
         }
 
         /// 编辑结束（键盘收起）后再补一次样式
         func textViewDidEndEditing(_ tv: UITextView) {
-            NoteBodyEditor.restyle(tv)
+            NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
+                                   pending: parent.bridge.pendingTraits)
         }
 
         // MARK: 点勾选框打勾
@@ -593,6 +702,7 @@ struct NoteBodyEditor: UIViewRepresentable {
             }
             guard let nl = newLine else { return }
             let newAll = plainNS.replacingCharacters(in: lr, with: nl)
+            parent.bridge.adjustStyles(old: plain, new: newAll)
             tv.text = newAll
             // 光标保持在这一行内的相对位置
             let rel = idx - lr.location
@@ -602,7 +712,8 @@ struct NoteBodyEditor: UIViewRepresentable {
                 location: min(lr.location + min(max(rel, 0), max(lineLen - 1, 0)), newNS.length),
                 length: 0
             )
-            NoteBodyEditor.restyle(tv)
+            NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
+                                   pending: parent.bridge.pendingTraits)
             if parent.text != newAll {
                 parent.text = newAll
             }
@@ -649,16 +760,198 @@ enum CheckboxArt {
 final class TextEditBridge {
     weak var textView: UITextView?
     var onEdited: ((String) -> Void)? = nil
-    /// 工具栏操作完成后让编辑器重新套样式（附件/删除线/标题）
+    /// 工具栏操作完成后让编辑器重新套样式
     var refreshUI: (() -> Void)? = nil
+    /// 样式变化回调（持久化 JSON 字符串）
+    var onStylesChanged: ((String) -> Void)? = nil
+    /// 选区/样式状态变化回调（工具栏按钮高亮）
+    var onSelectionChanged: ((Set<String>) -> Void)? = nil
 
     /// 标记字符本体（不含尾随空格）；存储与比较用
     static let checkedMarkRaw = "\u{E001}"
     static let uncheckedMarkRaw = "\u{E000}"
 
-    // MARK: 撤销 / 重做（自维护历史，工具栏操作也能撤销）
+    // MARK: 富文本样式
 
-    private var history: [(text: String, sel: NSRange)] = []
+    var styles: [NoteStyle] = []
+    /// 光标处的「下一个输入」样式（选区为空时工具栏开关的是它）
+    var pendingTraits: Set<String> = []
+
+    private func traits(at idx: Int) -> Set<String> {
+        var t = Set<String>()
+        for st in styles where idx >= st.l && idx < st.l + st.n {
+            if st.b { t.insert("b") }
+            if st.i { t.insert("i") }
+            if st.u { t.insert("u") }
+            if st.s { t.insert("s") }
+            if st.h { t.insert("h") }
+            if st.m { t.insert("m") }
+        }
+        return t
+    }
+
+    /// 当前选区「全部命中」的样式（空选区返回 pending，供按钮高亮）
+    func selectedTraits(_ tv: UITextView) -> Set<String> {
+        let r = tv.selectedRange
+        if r.length == 0 { return pendingTraits }
+        var acc: Set<String>? = nil
+        for idx in r.location..<(r.location + r.length) {
+            let t = traits(at: idx)
+            acc = acc == nil ? t : acc!.intersection(t)
+            if let a = acc, a.isEmpty { break }
+        }
+        return acc ?? []
+    }
+
+    /// 工具栏样式开关：有选区改选区样式；没选区改「下一个输入」样式。
+    /// 这是真样式——直接加粗/高亮文字，不再是插 ** 之类的符号。
+    func toggle(_ trait: String) {
+        guard let tv = textView else { return }
+        syncPlain(tv)
+        let ns = tv.text as NSString
+        let r = tv.selectedRange
+        if r.length > 0, r.location + r.length <= ns.length {
+            var hasAll = true
+            for idx in r.location..<(r.location + r.length) where !traits(at: idx).contains(trait) {
+                hasAll = false
+                break
+            }
+            var map: [Int: Set<String>] = [:]
+            for idx in 0..<ns.length {
+                let t = traits(at: idx)
+                if !t.isEmpty { map[idx] = t }
+            }
+            for idx in r.location..<(r.location + r.length) {
+                var t = map[idx] ?? []
+                if hasAll { t.remove(trait) } else { t.insert(trait) }
+                map[idx] = t
+            }
+            styles = Self.normalize(map, length: ns.length)
+            notifyStylesChanged()
+            syncSelectionUI(tv)
+            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+            record(tv)
+            onEdited?(NoteBodyEditor.plainText(tv.attributedText))
+        } else {
+            if pendingTraits.contains(trait) {
+                pendingTraits.remove(trait)
+            } else {
+                pendingTraits.insert(trait)
+            }
+            onSelectionChanged?(pendingTraits)
+            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+        }
+    }
+
+    func notifyStylesChanged() {
+        onStylesChanged?(NoteStyle.encode(styles))
+    }
+
+    /// 打字后把「下一个输入」样式落到新输入的区间
+    func captureTyping(old: String, new: String) {
+        guard !pendingTraits.isEmpty else { return }
+        let ins = Self.diffRange(old: old, new: new)
+        guard let (p, insLen, total) = ins, insLen > 0 else { return }
+        var map: [Int: Set<String>] = [:]
+        for idx in 0..<total {
+            let t = traits(at: idx)
+            if !t.isEmpty { map[idx] = t }
+        }
+        for idx in p..<(p + insLen) {
+            var t = map[idx] ?? []
+            t.formUnion(pendingTraits)
+            map[idx] = t
+        }
+        styles = Self.normalize(map, length: total)
+        notifyStylesChanged()
+    }
+
+    /// 增删文字后平移/裁剪样式区间（保证样式跟着原来的字走）
+    func adjustStyles(old: String, new: String) {
+        guard !styles.isEmpty, old != new else { return }
+        let ons = old as NSString, nns = new as NSString
+        var p = 0
+        let m = min(ons.length, nns.length)
+        while p < m, ons.character(at: p) == nns.character(at: p) { p += 1 }
+        var sfx = 0
+        while sfx < m - p, ons.character(at: ons.length - 1 - sfx) == nns.character(at: nns.length - 1 - sfx) { sfx += 1 }
+        // 变化区间 = [p, oldLen - sfx)；区间前的位置不动，区间后的整体平移，落在区间内的裁到 p
+        func shift(_ x: Int) -> Int {
+            if x <= p { return x }
+            if x >= ons.length - sfx { return x + (nns.length - ons.length) }
+            return p
+        }
+        var out: [NoteStyle] = []
+        for st in styles {
+            let nl = shift(st.l)
+            let nr = shift(st.l + st.n)
+            if nr > nl {
+                var v = st
+                v.l = nl
+                v.n = nr - nl
+                out.append(v)
+            }
+        }
+        styles = out
+    }
+
+    /// 公共前缀/后缀差分：返回 (插入起点, 插入长度, 新文本长度)
+    static func diffRange(old: String, new: String) -> (Int, Int, Int)? {
+        let ons = old as NSString, nns = new as NSString
+        var p = 0
+        let m = min(ons.length, nns.length)
+        while p < m, ons.character(at: p) == nns.character(at: p) { p += 1 }
+        var sfx = 0
+        while sfx < m - p, ons.character(at: ons.length - 1 - sfx) == nns.character(at: nns.length - 1 - sfx) { sfx += 1 }
+        let insLen = nns.length - p - sfx
+        return (p, insLen, nns.length)
+    }
+
+    /// 把逐字符样式表折叠成连续区间
+    static func normalize(_ map: [Int: Set<String>], length: Int) -> [NoteStyle] {
+        var out: [NoteStyle] = []
+        var cur: NoteStyle? = nil
+        var curSet: Set<String> = []
+        for idx in 0..<length {
+            let t = map[idx] ?? []
+            if t.isEmpty {
+                if cur != nil { out.append(cur!); cur = nil; curSet = [] }
+            } else if cur != nil, t == curSet {
+                cur!.n += 1
+            } else {
+                if cur != nil { out.append(cur!) }
+                var v = NoteStyle()
+                v.l = idx
+                v.n = 1
+                v.b = t.contains("b")
+                v.i = t.contains("i")
+                v.u = t.contains("u")
+                v.s = t.contains("s")
+                v.h = t.contains("h")
+                v.m = t.contains("m")
+                cur = v
+                curSet = t
+            }
+        }
+        if cur != nil { out.append(cur!) }
+        return out
+    }
+
+    /// 光标/选区变化：更新「下一个输入」样式 + 通知按钮高亮
+    func syncSelectionUI(_ tv: UITextView) {
+        guard tv.markedTextRange == nil else { return }
+        let r = tv.selectedRange
+        if r.length == 0 {
+            let ns = tv.text as NSString
+            let idx = r.location > 0 ? r.location - 1 : (ns.length > 0 ? 0 : -1)
+            pendingTraits = (idx >= 0 && idx < ns.length) ? traits(at: idx) : []
+        }
+        onSelectionChanged?(selectedTraits(tv))
+    }
+
+    // MARK: 撤销 / 重做（自维护历史，含样式，工具栏操作也能撤销）
+
+    private var history: [(text: String, styles: [NoteStyle], sel: NSRange)] = []
     private var histIdx: Int = -1
     private var suppressRecord = false
 
@@ -667,14 +960,15 @@ final class TextEditBridge {
         guard !suppressRecord else { return }
         let t = NoteBodyEditor.plainText(tv.attributedText)
         let sel = tv.selectedRange
-        if histIdx >= 0, histIdx < history.count, history[histIdx].text == t {
-            history[histIdx] = (t, sel)
+        if histIdx >= 0, histIdx < history.count,
+           history[histIdx].text == t, history[histIdx].styles == styles {
+            history[histIdx] = (t, styles, sel)
             return
         }
         if histIdx + 1 < history.count {
             history.removeSubrange((histIdx + 1)...)
         }
-        history.append((t, sel))
+        history.append((t, styles, sel))
         if history.count > 200 { history.removeFirst() }
         histIdx = history.count - 1
     }
@@ -692,22 +986,28 @@ final class TextEditBridge {
     }
 
     private func applyHistory(_ tv: UITextView) {
-        let (t, sel) = history[histIdx]
+        let e = history[histIdx]
         suppressRecord = true
-        tv.text = t
-        tv.selectedRange = sel
+        tv.text = e.text
+        tv.selectedRange = e.sel
         suppressRecord = false
+        styles = e.styles
+        notifyStylesChanged()
         refreshUI?()
-        onEdited?(t)
+        onEdited?(e.text)
+        syncSelectionUI(tv)
     }
 
     /// 光标处插入一段文字
     func insert(_ s: String) {
         guard let tv = textView else { return }
         syncPlain(tv)
-        let ns = tv.text as NSString
+        let old = tv.text ?? ""
+        let ns = old as NSString
         let r = tv.selectedRange
-        tv.text = ns.replacingCharacters(in: r, with: s)
+        let newAll = ns.replacingCharacters(in: r, with: s)
+        adjustStyles(old: old, new: newAll)
+        tv.text = newAll
         tv.selectedRange = NSRange(location: r.location + (s as NSString).length, length: 0)
         finish(tv)
     }
@@ -716,10 +1016,13 @@ final class TextEditBridge {
     func wrap(_ prefix: String, _ suffix: String) {
         guard let tv = textView else { return }
         syncPlain(tv)
-        let ns = tv.text as NSString
+        let old = tv.text ?? ""
+        let ns = old as NSString
         let r = tv.selectedRange
         let sel = ns.substring(with: r)
-        tv.text = ns.replacingCharacters(in: r, with: prefix + sel + suffix)
+        let newAll = ns.replacingCharacters(in: r, with: prefix + sel + suffix)
+        adjustStyles(old: old, new: newAll)
+        tv.text = newAll
         tv.selectedRange = NSRange(
             location: r.location + (prefix as NSString).length,
             length: (sel as NSString).length
@@ -731,7 +1034,8 @@ final class TextEditBridge {
     func toggleLinePrefix(_ prefix: String) {
         guard let tv = textView else { return }
         syncPlain(tv)
-        let ns = tv.text as NSString
+        let old = tv.text ?? ""
+        let ns = old as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
         let nonEmpty = comps.filter { !$0.isEmpty }
@@ -741,7 +1045,9 @@ final class TextEditBridge {
             return has ? String(line.dropFirst(prefix.count)) : prefix + line
         }
         let joined = out.joined(separator: "\n")
-        tv.text = ns.replacingCharacters(in: lr, with: joined)
+        let newAll = ns.replacingCharacters(in: lr, with: joined)
+        adjustStyles(old: old, new: newAll)
+        tv.text = newAll
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -750,7 +1056,8 @@ final class TextEditBridge {
     func renumberList() {
         guard let tv = textView else { return }
         syncPlain(tv)
-        let ns = tv.text as NSString
+        let old = tv.text ?? ""
+        let ns = old as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
         let nonEmpty = comps.filter { !$0.isEmpty }
@@ -766,7 +1073,9 @@ final class TextEditBridge {
             return s
         }
         let joined = out.joined(separator: "\n")
-        tv.text = ns.replacingCharacters(in: lr, with: joined)
+        let newAll = ns.replacingCharacters(in: lr, with: joined)
+        adjustStyles(old: old, new: newAll)
+        tv.text = newAll
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -776,7 +1085,8 @@ final class TextEditBridge {
     func toggleChecklist() {
         guard let tv = textView else { return }
         syncPlain(tv)
-        let ns = tv.text as NSString
+        let old = tv.text ?? ""
+        let ns = old as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
         let out = comps.map { line -> String in
@@ -787,7 +1097,7 @@ final class TextEditBridge {
             if let p = Self.markerPrefix(in: line, checked: false) {
                 return Self.checkedMark + String(line.dropFirst(p.count))
             }
-            // 去掉其它列表前缀再挂勾选框，避免「- □ 」叠加
+            // 去掉其它列表前缀再挂勾选框，避免叠加
             var s = line
             for p in ["- ", "> ", "1. ", "2. ", "3. "] where s.hasPrefix(p) {
                 s = String(s.dropFirst(p.count))
@@ -796,7 +1106,9 @@ final class TextEditBridge {
             return Self.uncheckedMark + s
         }
         let joined = out.joined(separator: "\n")
-        tv.text = ns.replacingCharacters(in: lr, with: joined)
+        let newAll = ns.replacingCharacters(in: lr, with: joined)
+        adjustStyles(old: old, new: newAll)
+        tv.text = newAll
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -855,8 +1167,9 @@ final class TextEditBridge {
     func indent(shift: Int) {
         guard let tv = textView else { return }
         syncPlain(tv)
+        let old = tv.text ?? ""
+        let ns = old as NSString
         let pad = "    "
-        let ns = tv.text as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
         let out = comps.map { line -> String in
@@ -872,7 +1185,9 @@ final class TextEditBridge {
             return s
         }
         let joined = out.joined(separator: "\n")
-        tv.text = ns.replacingCharacters(in: lr, with: joined)
+        let newAll = ns.replacingCharacters(in: lr, with: joined)
+        adjustStyles(old: old, new: newAll)
+        tv.text = newAll
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -988,7 +1303,7 @@ struct TemplatePickerView: View {
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(.primary)
                 .lineLimit(1)
-            Text(t.body)
+            Text(TextEditBridge.displayFriendly(t.body))
                 .font(.system(size: 12))
                 .foregroundColor(.secondary)
                 .lineLimit(7)
@@ -1025,7 +1340,7 @@ struct TemplateManageView: View {
                                     Text(t.name)
                                         .font(.system(size: 15, weight: .semibold))
                                         .foregroundColor(.primary)
-                                    Text(t.body)
+                                    Text(TextEditBridge.displayFriendly(t.body))
                                         .font(.system(size: 12))
                                         .foregroundColor(.secondary)
                                         .lineLimit(2)
