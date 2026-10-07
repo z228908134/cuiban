@@ -100,14 +100,12 @@ struct TaskListView: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: 4) {
                 Text(t.title.isEmpty ? "（未命名）" : t.title)
                     .font(.app(16, weight: .semibold))
                     .strikethrough(t.isDone)
                     .foregroundColor(t.isDone ? .secondary : .primary)
-                Text(dueLine(t))
-                    .font(.app(12))
-                    .foregroundColor(t.isOverdue ? .red : .secondary)
+                dueBadge(t)
             }
 
             Spacer(minLength: 4)
@@ -151,6 +149,57 @@ struct TaskListView: View {
             }
             .tint(.orange)
         }
+    }
+
+    /// 时间高亮标签：逾期红、当天橙、以后蓝、已完成灰。
+    /// 标签只包住时间本身，「还有 20 小时」这类说明留在标签外，避免一整行都是底色。
+    private func dueBadge(_ t: TaskItem) -> some View {
+        let parts = dueParts(t)
+        return HStack(spacing: 5) {
+            Text(parts.time)
+                .font(.app(11, weight: .semibold))
+                .foregroundColor(parts.fg)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 5).fill(parts.bg)
+                )
+            if !parts.extra.isEmpty {
+                Text(parts.extra)
+                    .font(.app(11))
+                    .foregroundColor(t.isDone ? Color.secondary.opacity(0.7) : .secondary)
+            }
+        }
+    }
+
+    /// 时间文案拆成「标签本体 + 补充说明」两部分，按紧急程度分色
+    private func dueParts(_ t: TaskItem) -> (time: String, extra: String, fg: Color, bg: Color) {
+        if t.isDone {
+            let s = t.doneAt.map { "已完成 · " + timeLabel($0) } ?? "已完成"
+            return (s, "", Color.secondary, Color.primary.opacity(0.06))
+        }
+        let due = t.effectiveDue
+        let diff = due.timeIntervalSince(now)
+        // 逾期：红底
+        if diff <= 0 {
+            return ("已逾期 " + human(-diff), timeLabel(due),
+                    Color(red: 0.64, green: 0.18, blue: 0.18),
+                    Color(red: 0.99, green: 0.92, blue: 0.92))
+        }
+        // 今天 / 明天：橙底
+        let cal = Calendar.current
+        let days = cal.dateComponents([.day],
+                                      from: cal.startOfDay(for: now),
+                                      to: cal.startOfDay(for: due)).day ?? 0
+        if days <= 1 {
+            return ("今天 " + timeLabel(due), "还有 " + human(diff),
+                    Color(red: 0.52, green: 0.31, blue: 0.04),
+                    Color(red: 0.98, green: 0.91, blue: 0.84))
+        }
+        // 更远的：蓝底
+        return (timeLabel(due), "还有 " + human(diff),
+                Color(red: 0.09, green: 0.37, blue: 0.65),
+                Color(red: 0.90, green: 0.95, blue: 0.99))
     }
 
     private func dueLine(_ t: TaskItem) -> String {

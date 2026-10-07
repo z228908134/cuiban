@@ -368,6 +368,23 @@ struct MonthView: View {
 
                 HStack(spacing: 6) {
                     Text(fmt(e.date, "HH:mm"))
+                        .font(.app(11, weight: .semibold))
+                        .foregroundColor(e.projected
+                                         ? Color(red: 0.09, green: 0.37, blue: 0.65)
+                                         : (e.task.isOverdue && !e.task.isDone
+                                            ? Color(red: 0.64, green: 0.18, blue: 0.18)
+                                            : Color.secondary))
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5).fill(
+                                e.projected
+                                ? Color(red: 0.90, green: 0.95, blue: 0.99)
+                                : (e.task.isOverdue && !e.task.isDone
+                                   ? Color(red: 0.99, green: 0.92, blue: 0.92)
+                                   : Color.primary.opacity(0.06))
+                            )
+                        )
                     if e.projected {
                         Text("重复\(repeatLabel(e.task.repeatMode, weekdays: e.task.weekdays))")
                     }
