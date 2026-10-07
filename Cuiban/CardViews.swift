@@ -10,26 +10,29 @@ struct CardListView: View {
     @State private var editing: CardItem? = nil
     @State private var detail: CardItem? = nil
     @State private var showingAdd = false
-    @State private var confirmDelete: CardItem? = nil
-    @State private var notice: String? = nil
-    /// 从剪贴板识别出来、等待确认的卡号
-    @State private var clipboardCard: CardItem? = nil
+    /// 列表页统一提示弹窗
+    @State private var alertInfo: AlertInfo? = nil
 
     private func pickFromClipboard() {
         let text = UIPasteboard.general.string ?? ""
         // 卡号一般是 12~24 位连续数字
         let digits = text.filter { $0.isNumber }
         guard digits.count >= 12 else {
-            notice = "剪贴板里没找到卡号（需要 12 位以上连续数字）"
+            alertInfo = AlertInfo(title: "没识别到卡号",
+                                  message: "剪贴板里没有 12 位以上的连续数字。",
+                                  okTitle: "好")
             return
         }
         var c = CardItem()
         c.number = String(digits.prefix(24))
-        clipboardCard = c
+        alertInfo = AlertInfo(title: "识别到卡号",
+                              message: c.numberGrouped + "\n\n要去填写完整信息吗？",
+                              okTitle: "去填写") { editing = c }
     }
 
     var body: some View {
         VStack(spacing: 0) {
+            searchBar
             chips
             Divider()
             listBody
@@ -75,29 +78,53 @@ struct CardListView: View {
         .sheet(item: $detail) { c in
             CardDetailView(cardID: c.id)
         }
-        .alert(item: $confirmDelete) { c in
-            Alert(title: Text("删除这张卡片？"),
-                  message: Text(c.displayName),
-                  primaryButton: .destructive(Text("删除")) {
-                      store.delete(id: c.id)
-                  },
+        .alert(item: $alertInfo) { info in
+            Alert(title: Text(info.title),
+                  message: Text(info.message),
+                  primaryButton: .destructive(Text(info.okTitle)) { info.onOK?() },
                   secondaryButton: .cancel(Text("取消")))
         }
-        .alert(item: $clipboardCard) { c in
-            Alert(title: Text("识别到卡号"),
-                  message: Text(c.numberGrouped + "\n\n要现在保存吗？"),
-                  primaryButton: .default(Text("去填写")) {
-                      editing = c
-                  },
-                  secondaryButton: .cancel(Text("不用")))
+    }
+
+    /// 列表页的提示弹窗（避免同视图挂多个 alert）
+    struct AlertInfo: Identifiable {
+        let id = UUID()
+        var title: String
+        var message: String
+        var okTitle: String = "好"
+        var onOK: (() -> Void)? = nil
+    }
+
+    // MARK: 搜索
+
+    private var searchBar: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 14))
+                .foregroundColor(.secondary)
+            TextField("搜银行 / 卡号 / 户主 / 备注", text: $keyword)
+                .font(.system(size: 15))
+                .autocapitalization(.none)
+                .disableAutocorrection(true)
+            if !keyword.isEmpty {
+                Button {
+                    keyword = ""
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 15))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+            }
         }
-        .alert("提示", isPresented: Binding(
-            get: { notice != nil },
-            set: { if !$0 { notice = nil } }
-        )) {
-            Alert(title: Text("提示"), message: Text(notice ?? ""),
-                  dismissButton: .default(Text("好")))
-        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(Color.primary.opacity(0.06))
+        )
+        .padding(.horizontal, 14)
+        .padding(.top, 8)
     }
 
     // MARK: 分类筛选
@@ -168,7 +195,10 @@ struct CardListView: View {
                                 editing = c
                             } label: { Label("编辑", systemImage: "pencil") }
                             Button(role: .destructive) {
-                                confirmDelete = c
+                                alertInfo = AlertInfo(
+                                    title: "删除这张卡片？",
+                                    message: c.displayName,
+                                    okTitle: "删除") { store.delete(id: c.id) }
                             } label: { Label("删除", systemImage: "trash") }
                         }
                     }
@@ -224,7 +254,7 @@ struct CardRow: View {
 struct CardDetailView: View {
     let cardID: String
     @ObservedObject private var store = CardStore.shared
-    @Environment(\.presentationMode) private var dismiss
+    @Environment(\.dismiss) private var dismiss
 
     @State private var editing = false
     @State private var viewerStart = 0
@@ -266,7 +296,7 @@ struct CardDetailView: View {
         .alert("删除这张卡片？", isPresented: $confirmDelete) {
             Button("删除", role: .destructive) {
                 if let c = card { store.delete(id: c.id) }
-                dismiss()
+                self.dismiss()
             }
             Button("取消", role: .cancel) {}
         }
@@ -393,8 +423,13 @@ struct CardEditView: View {
     /// nil = 新建
     let card: CardItem?
 
+    private enum PhotoSource: Int, Identifiable {
+        case library, camera
+        var id: Int { rawValue }
+    }
+
     @ObservedObject private var store = CardStore.shared
-    @Environment(\.presentationMode) private var dismiss
+    @Environment(\.dismiss) private var dismiss
 
     @State private var type: CardType = .debit
     @State private var bank: String = ""
@@ -405,14 +440,9 @@ struct CardEditView: View {
     @State private var createdAt: Date = Date()
 
     @State private var showTypePicker = false
-    @State private var photoSource: Int? = nil
+    @State private var photoSource: PhotoSource? = nil
     @State private var viewerStart = 0
     @State private var viewerOpen = false
-
-    private enum PhotoSource: Int, Identifiable {
-        case library, camera
-        var id: Int { rawValue }
-    }
 
     var body: some View {
         NavigationView {
@@ -425,7 +455,7 @@ struct CardEditView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("取消") { dismiss() }
+                    Button("取消") { self.dismiss() }
                 }
             }
             .sheet(item: $photoSource) { src in
@@ -505,7 +535,7 @@ struct CardEditView: View {
                     Text("图片").font(.system(size: 15))
                     Spacer()
                     Button {
-                        photoSource = PhotoSource.library.rawValue
+                        photoSource = .library
                     } label: {
                         HStack(spacing: 4) {
                             Text(photos.isEmpty ? "上传" : "\(photos.count) 张")
@@ -566,7 +596,7 @@ struct CardEditView: View {
                     }
                     if ImagePicker.cameraAvailable {
                         Button {
-                            photoSource = PhotoSource.camera.rawValue
+                            photoSource = .camera
                         } label: {
                             VStack(spacing: 4) {
                                 Image(systemName: "camera")
@@ -647,7 +677,7 @@ struct CardEditView: View {
             let gone = Set(old.photos).subtracting(Set(photos))
             if !gone.isEmpty { AttachmentStore.delete(Array(gone)) }
         }
-        dismiss()
+        self.dismiss()
     }
 }
 
@@ -656,7 +686,7 @@ struct CardEditView: View {
 struct CardTypePicker: View {
     let current: CardType
     let onPick: (CardType) -> Void
-    @Environment(\.presentationMode) private var dismiss
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         VStack(spacing: 0) {
@@ -665,7 +695,7 @@ struct CardTypePicker: View {
                     .font(.system(size: 17, weight: .semibold))
                 Spacer()
                 Button {
-                    dismiss()
+                    self.dismiss()
                 } label: {
                     Image(systemName: "xmark")
                         .font(.system(size: 13, weight: .medium))
