@@ -107,7 +107,7 @@ final class CloudSyncBookmark {
     func keep(_ u: URL) {
         url = u
         do {
-            let d = try u.bookmarkData(options: .withSecurityScope,
+            let d = try u.bookmarkData(options: [],
                                        includingResourceValuesForKeys: nil,
                                        relativeTo: nil)
             UserDefaults.standard.set(d, forKey: defaultsKey)
@@ -120,7 +120,7 @@ final class CloudSyncBookmark {
         guard let d = UserDefaults.standard.data(forKey: defaultsKey) else { return }
         var stale = false
         if let u = try? URL(resolvingBookmarkData: d,
-                           options: .withSecurityScope,
+                           options: [],
                            relativeTo: nil,
                            bookmarkDataIsStale: &stale) {
             if u.startAccessingSecurityScopedResource() { url = u }
