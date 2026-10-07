@@ -545,13 +545,13 @@ private enum PhotoSource: Int, Identifiable {
 
 extension View {
     /// 表单右侧的「值」：蓝色，和参考图一致
-    func value() -> some View {
+    func asCardValue() -> some View {
         font(.app(15))
             .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
     }
 
     /// 右侧的尖括号
-    func chevron() -> some View {
+    func asCardChevron() -> some View {
         font(.app(13, weight: .semibold))
             .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
     }
@@ -637,8 +637,8 @@ struct CardEditView: View {
                         showTypePicker = true
                     } label: {
                         HStack(spacing: 4) {
-                            Text(type.label).value
-                            Image(systemName: "chevron.right").chevron
+                            Text(type.label).asCardValue()
+                            Image(systemName: "chevron.right").asCardChevron()
                         }
                     }
                     .buttonStyle(.plain)
@@ -667,8 +667,8 @@ struct CardEditView: View {
                         photoSource = .library
                     } label: {
                         HStack(spacing: 4) {
-                            Text(photos.isEmpty ? "上传" : "\(photos.count) 张").value
-                            Image(systemName: "chevron.right").chevron
+                            Text(photos.isEmpty ? "上传" : "\(photos.count) 张").asCardValue()
+                            Image(systemName: "chevron.right").asCardChevron()
                         }
                     }
                     .buttonStyle(.plain)
