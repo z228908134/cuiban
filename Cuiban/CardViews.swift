@@ -164,7 +164,10 @@ struct CardListView: View {
                                 filter = filter == t ? nil : t
                             }
                         }
+                        // 末尾垫一块不可见的宽度，保证内容不足一屏时也贴左而不是被撑到中间
+                        Color.clear.frame(width: 1, height: 1)
                     }
+                    .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                 }
