@@ -184,6 +184,7 @@ struct NotesView: View {
 struct NoteEditorView: View {
     @EnvironmentObject var noteStore: NoteStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     /// nil = 新建
     let note: NoteItem?
@@ -200,6 +201,12 @@ struct NoteEditorView: View {
     @State private var showTemplates = false
     @State private var bridge: TextEditBridge
 
+    /// 自动保存：内容每变一次 +1，.task(id:) 靠它做「停手 1.2 秒才落盘」的防抖。
+    /// 只靠 onDisappear 存不住——用户从多任务界面直接杀进程时根本不会触发。
+    @State private var dirtyToken = 0
+    /// 上次真正落盘时的内容指纹，用来判断「其实没改过」而跳过无谓写入
+    @State private var lastSaved: String
+
     private enum PhotoSource: Int, Identifiable {
         case library, camera
         var id: Int { rawValue }
@@ -212,9 +219,22 @@ struct NoteEditorView: View {
         _photos = State(initialValue: note?.photos ?? [])
         _styleData = State(initialValue: note?.styleData ?? "[]")
         _savedID = State(initialValue: note?.id)
+        // 初始指纹按「编辑器的实际初始值」算，而不是空串：
+        // 否则打开一条笔记什么都不改，关闭时也会被判成「改过了」而重写一遍
+        _lastSaved = State(initialValue: Self.fingerprint(
+            title: note?.title ?? "",
+            body: TextEditBridge.migrate(note?.body ?? ""),
+            photos: note?.photos ?? [],
+            style: note?.styleData ?? "[]"))
         let br = TextEditBridge()
         br.styles = NoteStyle.decode(note?.styleData)
         _bridge = State(initialValue: br)
+    }
+
+    /// 内容指纹：四个字段拼一起，够用且比逐字段比较省事
+    private static func fingerprint(title: String, body: String,
+                                    photos: [String], style: String) -> String {
+        "\(title)\u{1}\(body)\u{1}\(photos.joined(separator: ","))\u{1}\(style)"
     }
 
     var body: some View {
@@ -270,6 +290,27 @@ struct NoteEditorView: View {
                 }
             }
             .onDisappear { saveIfWorth() }
+            // 自动保存：标题/正文/样式/图片任一变化都把 dirtyToken 推上去，
+            // 下面的 task 会在停手 0.8 秒后落盘（继续输入则 task 被取消重新计时）
+            .onChange(of: title) { _ in dirtyToken += 1 }
+            .onChange(of: bodyText) { _ in dirtyToken += 1 }
+            .onChange(of: styleData) { _ in dirtyToken += 1 }
+            .onChange(of: photos) { _ in dirtyToken += 1 }
+            .task(id: dirtyToken) {
+                guard dirtyToken > 0 else { return }
+                do {
+                    try await Task.sleep(nanoseconds: 800_000_000)
+                } catch {
+                    return // 期间又改了，重新计时即可
+                }
+                guard !Task.isCancelled else { return }
+                saveIfWorth()
+            }
+            // App 退到后台 / 熄屏 / 切多任务时立刻落盘：
+            // 用户从多任务界面直接划掉 App 走的是这条路径，onDisappear 不会触发
+            .onChange(of: scenePhase) { phase in
+                if phase != .active { flushSave() }
+            }
         }
         .navigationViewStyle(.stack)
     }
@@ -423,16 +464,38 @@ struct NoteEditorView: View {
     }
 
     private func saveAndClose() {
-        saveIfWorth()
+        flushSave()
         dismiss()
     }
 
-    /// 空笔记不保存；有内容就写库
+    /// 立刻落盘（关闭 / 退后台）。不管有没有改动都走一遍 saveIfWorth，
+    /// 由内容指纹去判断要不要真的写。
+    private func flushSave() {
+        saveIfWorth()
+    }
+
+    /// 空笔记不保存；有内容才写库。内容没变过则跳过，避免无谓的磁盘写入和 updatedAt 抖动
+    /// （updatedAt 变了笔记列表会重新排序，老笔记会被顶到最前面）。
     private func saveIfWorth() {
         let hasContent = !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !photos.isEmpty
-        guard hasContent else { return }
+
+        // 已经存过、现在被清空了 → 直接把这条笔记删掉。
+        // 不这么做的话：写了内容自动存过一次，之后全选删除，杀进程时
+        // 走 saveIfWorth 的空内容 guard 直接返回，旧文字就留在库里了。
+        if !hasContent {
+            if let sid = savedID, noteStore.note(id: sid) != nil {
+                noteStore.delete(ids: [sid])
+                lastSaved = ""
+            }
+            return
+        }
+
+        let fp = Self.fingerprint(title: title, body: bodyText,
+                                  photos: photos, style: styleData)
+        guard fp != lastSaved else { return }
+        lastSaved = fp
 
         var n = note ?? NoteItem()
         // 关闭按钮和 onDisappear 都会走到这里：新建时复用第一次保存的 id，
