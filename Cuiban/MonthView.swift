@@ -23,8 +23,8 @@ struct MonthView: View {
     @State private var editing: TaskItem? = nil
     @State private var detail: TaskItem? = nil
     @State private var showingAdd = false
-    /// true = 收起成周条（上滑）
-    @State private var collapsed = false
+    /// true = 收起成周条（上滑）；默认进来就是周视图
+    @State private var collapsed = true
 
     private let cal = Calendar.current
     private let weekNames = ["日", "一", "二", "三", "四", "五", "六"]

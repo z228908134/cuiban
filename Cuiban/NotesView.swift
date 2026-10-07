@@ -445,6 +445,14 @@ struct NoteBodyEditor: UIViewRepresentable {
         tap.delegate = context.coordinator
         tap.cancelsTouchesInView = true
         tv.addGestureRecognizer(tap)
+        // 关键：系统自带的「点按定位光标」手势比我们早添加、优先级更高，
+        // 不处理的话点勾选框时光标先响应、我们的手势直接失败。
+        // 让系统所有点按类手势都先等我们的手势失败，只有非勾选框区域才轮到它们。
+        for other in tv.gestureRecognizers ?? [] where other !== tap {
+            if other is UITapGestureRecognizer || other is UILongPressGestureRecognizer {
+                other.require(toFail: tap)
+            }
+        }
         NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         bridge.record(tv)
         return tv
@@ -656,10 +664,12 @@ struct NoteBodyEditor: UIViewRepresentable {
             return Self.tapHitsCheckbox(tap: tap, tv: tv)
         }
 
-        /// 容器原点在 view 坐标系里的位置（= textContainerInset 的偏移）
+        /// 容器原点在 view 坐标系里的位置。
+        /// = textContainerInset 偏移，再减去已滚动的内容高度（没滚动时 contentOffset ≤ 0，取 0）
         private static func containerOrigin(in tv: UITextView) -> CGPoint {
             let inset = tv.textContainerInset
-            return CGPoint(x: inset.left, y: inset.top)
+            let scrolled = max(0, tv.contentOffset.y)
+            return CGPoint(x: inset.left, y: inset.top - scrolled)
         }
 
         /// tap 点位换算到 text container 坐标（characterIndex 要的是容器坐标）
@@ -752,6 +762,7 @@ struct NoteBodyEditor: UIViewRepresentable {
             )
             NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
                                    pending: parent.bridge.pendingTraits)
+            parent.bridge.syncSelectionUI(tv)
             if parent.text != newAll {
                 parent.text = newAll
             }
