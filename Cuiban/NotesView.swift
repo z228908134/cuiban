@@ -531,11 +531,11 @@ struct NoteBodyEditor: UIViewRepresentable {
 
             // 勾选框：直接用「☐ / ☑」字符本体（滴答清单同款细描边空心方框），
             // 不再叠加绘制的附件图片——两层叠在一起会又脏又难看。
-            // 方框比正文略小一号、颜色略浅，和滴答的观感一致。
+            // 方框比正文大一号（更好看也好点），颜色略浅；勾上后随整行一起变浅。
             let info = TextEditBridge.markInfo(in: line)
             if let info = info, info.markLen > 0 {
                 attr.addAttributes([
-                    .font: UIFont.systemFont(ofSize: 15),
+                    .font: UIFont.systemFont(ofSize: 19),
                     .foregroundColor: info.checked
                         ? UIColor.tertiaryLabel
                         : UIColor.label.withAlphaComponent(0.82)
@@ -636,39 +636,56 @@ struct NoteBodyEditor: UIViewRepresentable {
         /// 命中判定：点落在某个勾选行「方框」的热区里 → 返回该行范围 + 标记位置 + 标记长度 + 当前勾选态。
         /// 用 caretRect 拿方框位置：它由系统按 inset / 滚动偏移算好，永远和光标所见一致，
         /// 不再自己换算 textContainer 坐标（之前那套换算就是一直不准的根源）。
+        /// 热区故意放得很大（手指点不准 19pt 的方框），所以收集所有命中的行、
+        /// 取离手指最近的那个，避免上下相邻两行都是待办时点错行。
         private static func checkboxHit(at point: CGPoint, in tv: UITextView)
             -> (range: NSRange, markLoc: Int, markLen: Int, checked: Bool)? {
             let ns = (tv.text ?? "") as NSString
             var loc = 0
+            var best: (range: NSRange, markLoc: Int, markLen: Int, checked: Bool)?
+            var bestDist: CGFloat = .greatestFiniteMagnitude
+
+            func consider(_ range: NSRange, _ markLoc: Int, _ markLen: Int,
+                          _ checked: Bool, _ box: CGRect) {
+                // 点到方框中心的距离最近的胜出
+                let cx = box.midX, cy = box.midY
+                let dx = point.x - cx, dy = point.y - cy
+                let d = sqrt(dx * dx + dy * dy)
+                if d < bestDist {
+                    bestDist = d
+                    best = (range, markLoc, markLen, checked)
+                }
+            }
+
             while loc < ns.length {
                 let lr = ns.lineRange(for: NSRange(location: loc, length: 0))
                 if lr.length > 0, let info = TextEditBridge.markInfo(in: ns.substring(with: lr)) {
                     let markLoc = lr.location + info.loc
                     if let pos = tv.position(from: tv.beginningOfDocument, offset: markLoc) {
                         let cr = tv.caretRect(for: pos)
-                        // 方框只有 17pt，手指很难点准，热区左右都放宽、纵向覆盖整行
-                        let hot = CGRect(x: cr.minX - 12,
-                                         y: cr.minY - 8,
-                                         width: 20 + CGFloat(info.markLen) * 8,
-                                         height: cr.height + 16)
+                        // 方框 19pt 但手指很难点准：热区左右大幅放宽、纵向也加高
+                        let hot = CGRect(x: cr.minX - 14,
+                                         y: cr.minY - 6,
+                                         width: 22 + CGFloat(info.markLen) * 16,
+                                         height: cr.height + 14)
                         if hot.contains(point) {
-                            return (range: lr, markLoc: markLoc, markLen: info.markLen,
-                                    checked: info.checked)
+                            consider(lr, markLoc, info.markLen, info.checked, hot)
                         }
                     }
                     // 兜底：让系统告诉我们这个点最近的字符位置（同样是系统算坐标，最稳）
-                    if let near = tv.closestPosition(to: point) {
+                    if best == nil, let near = tv.closestPosition(to: point) {
                         let idx = tv.offset(from: tv.beginningOfDocument, to: near)
-                        if idx >= markLoc && idx < markLoc + info.markLen {
-                            return (range: lr, markLoc: markLoc, markLen: info.markLen,
-                                    checked: info.checked)
+                        // 方框本身 + 方框后面那个空格都算点在框上
+                        if idx >= markLoc && idx <= markLoc + info.markLen {
+                            consider(lr, markLoc, info.markLen, info.checked,
+                                     CGRect(x: point.x, y: point.y, width: 1, height: 1))
                         }
                     }
                 }
                 if lr.length == 0 { break }
                 loc = lr.location + lr.length
             }
-            return nil
+            return best
         }
 
         /// 点在勾选框上：切换勾选状态。返回 true 表示已接管（hitTest 会吞掉这次触摸）
