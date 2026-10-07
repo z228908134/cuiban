@@ -93,7 +93,7 @@ private final class SelfSignedSession {
 }
 
 struct WebDAVClient {
-    /// 形如 https://8.133.219.183:5006/cuiban-sync 或 http://192.168.1.10:5005/xxx
+    /// 形如 https://你的NAS地址:端口/目录 或 http://192.168.x.x:5005/xxx
     var baseURL: String
     var user: String
     var password: String
@@ -197,32 +197,83 @@ struct WebDAVClient {
         }
     }
 
-    /// 传上去。目录不存在会先试着建一次（MKCOL）
+/// 传上去。目录不存在会先试着建一次（MKCOL）
     func upload(_ data: Data) throws {
         guard let u = fileURL else { throw WebDAVError.badURL }
         do {
             try request(u, "PUT", body: data)
-        } catch WebDAVError.http(let code, _) where code == 404 || code == 409 {
-            // 目录不存在 → 建目录再传
-            if let d = dirURL { try? request(d, "MKCOL") }
+    } catch WebDAVError.http(let code, _) where code == 404 || code == 409 {
+   // 目录不存在 → 建目录再传
+   if let d = dirURL { try? request(d, "MKCOL") }
             try request(u, "PUT", body: data)
         }
     }
 
+    /// 传一个指定文件名的文件（历史备份用）
+    func upload(_ data: Data, as name: String) throws {
+        var s = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasSuffix("/") { s.removeLast() }
+        guard let u = URL(string: s + "/" + name) else { throw WebDAVError.badURL }
+        do {
+            try request(u, "PUT", body: data)
+        } catch WebDAVError.http(let code, _) where code == 404 || code == 409 {
+            if let d = dirURL { try? request(d, "MKCOL") }
+      try request(u, "PUT", body: data)
+        }
+    }
+
+/// 列目录下的文件名（不含路径）。服务端不支持 PROPFIND 时返回 nil
+    func listFileNames() -> [String]? {
+        guard let d = dirURL else { return nil }
+        let xml = "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:allprop/></d:propfind>"
+        let data: Data
+        do {
+      data = try request(d, "PROPFIND", body: Data(xml.utf8))
+        } catch {
+      return nil
+        }
+        guard let text = String(data: data, encoding: .utf8) else { return nil }
+        // 从 multistatus 里抠出所有 <D:href>…</D:href>。
+        // 前缀可能是 D: 也可能是无前缀（服务端实现各有不同），两种都匹配。
+        let pat = "<(?:[a-zA-Z0-9]+:)?href[^>]*>([^<]*)</(?:[a-zA-Z0-9]+:)?href>"
+        guard let re = try? NSRegularExpression(pattern: pat) else { return nil }
+        let ns = text as NSString
+        var out: [String] = []
+        re.enumerateMatches(in: text, range: NSRange(location: 0, length: ns.length)) { m, _, _ in
+            guard let m = m, m.numberOfRanges > 1 else { return }
+            let href = ns.substring(with: m.range(at: 1))
+            // href 可能是 /目录/文件、也可能是完整 URL，统一取最后一段
+let segs = href.split(separator: "/").map(String.init)
+            guard var last = segs.last, !last.isEmpty else { return }
+        // 服务端可能把非 ASCII 转成 %XX
+            if let d = last.removingPercentEncoding, !d.isEmpty { last = d }
+      out.append(last)
+  }
+        return out
+    }
+
+    /// 删一个远端文件
+    func deleteFile(named name: String) {
+        var s = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        while s.hasSuffix("/") { s.removeLast() }
+        guard let u = URL(string: s + "/" + name) else { return }
+        try? request(u, "DELETE")
+    }
+
     /// 设置页的「测试连接」：探一下目录能不能列
     func test() -> String {
-        guard let d = dirURL else { return "地址填得不对，要以 http:// 或 https:// 开头" }
+ guard let d = dirURL else { return "地址填得不对，要以 http:// 或 https:// 开头" }
         do {
-            let xml = "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:allprop/></d:propfind>"
-            _ = try request(d, "PROPFIND", body: Data(xml.utf8))
-            return "连接成功，能读写这个目录"
+      let xml = "<?xml version=\"1.0\"?><d:propfind xmlns:d=\"DAV:\"><d:allprop/></d:propfind>"
+      _ = try request(d, "PROPFIND", body: Data(xml.utf8))
+   return "连接成功，能读写这个目录"
         } catch let e as WebDAVError {
-            if case .http(let code, _) = e {
-                // 有些服务端不允许 PROPFIND 但允许读写，不算失败
-                if code == 405 || code == 207 { return "连接成功，服务端不支持列目录但可以读写" }
-                return "连不上：\(e.localizedDescription)"
-            }
-            return "连不上：\(e.localizedDescription)"
+    if case .http(let code, _) = e {
+   // 有些服务端不允许 PROPFIND 但允许读写，不算失败
+            if code == 405 || code == 207 { return "连接成功，服务端不支持列目录但可以读写" }
+      return "连不上：\(e.localizedDescription)"
+       }
+    return "连不上：\(e.localizedDescription)"
         } catch {
             return "连不上：\(error.localizedDescription)"
         }

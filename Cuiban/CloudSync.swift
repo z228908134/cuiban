@@ -188,22 +188,117 @@ guard let cli = webdavClient else { return false }
         return try? Data(contentsOf: u)
     }
 
-    /// 写远端
+/// 写远端
     private static func writeRemote(_ data: Data) throws {
         let c = config
         if c.mode == "webdav" {
-        guard let cli = webdavClient else { throw WebDAVClient.WebDAVError.badURL }
-    try cli.upload(data)
-    return
+      guard let cli = webdavClient else { throw WebDAVClient.WebDAVError.badURL }
+   try cli.upload(data)
+      return
         }
         guard let u = localRemoteURL else { throw WebDAVClient.WebDAVError.badURL }
-        // 先写临时文件再替换，避免中途断网写坏文件
+    // 先写临时文件再替换，避免中途断网写坏文件
         let tmp = u.appendingPathExtension("tmp")
-     try data.write(to: tmp, options: .atomic)
+        try data.write(to: tmp, options: .atomic)
         if FileManager.default.fileExists(atPath: u.path) {
 _ = try FileManager.default.replaceItemAt(u, withItemAt: tmp)
         } else {
-    try FileManager.default.moveItem(at: tmp, to: u)
+         try FileManager.default.moveItem(at: tmp, to: u)
+        }
+    }
+
+    // MARK: 远端历史备份（同 cuiban-data.json 同格式，按时间戳命名）
+
+    /// 历史文件前缀（和主文件区分开，listRemoteBackups 靠它筛选）
+    private static let historyPrefix = "cuiban-backup-"
+    private static let historySuffix = ".json"
+
+    /// 远端历史备份的份数上限（跟着 AppSettings.maxBackups 走）
+    private static func historyKeep() -> Int {
+        let v = UserDefaults.standard.integer(forKey: "cuiban.cloudHistoryKeep")
+        return v > 0 ? v : 20
+    }
+
+    static var historyKeepBindingValue: Int { historyKeep() }
+
+    static func setHistoryKeep(_ v: Int) {
+        UserDefaults.standard.set(max(1, v), forKey: "cuiban.cloudHistoryKeep")
+        pruneRemoteHistory()
+    }
+
+    private static func historyName(_ d: Date) -> String {
+        "\(historyPrefix)\(stampFor(d))\(historySuffix)"
+    }
+
+    private static func stampFor(_ d: Date) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        return f.string(from: d)
+    }
+
+    /// 同步成功后额外存一份带时间戳的历史文件（失败不影响主同步）
+    private static func writeRemoteHistory(_ data: Data) {
+        let name = historyName(Date())
+        do {
+            let c = config
+            if c.mode == "webdav" {
+                guard let cli = webdavClient else { return }
+                try cli.upload(data, as: name)
+            } else {
+guard let dir = localRemoteDir else { return }
+                let u = dir.appendingPathComponent(name)
+                try data.write(to: u, options: .atomic)
+     }
+  pruneRemoteHistory()
+        } catch {
+            print("写远端历史备份失败：\(error.localizedDescription)")
+        }
+    }
+
+    private static var localRemoteDir: URL? {
+        let c = config
+        guard c.mode != "webdav", !c.folder.isEmpty else { return nil }
+        return URL(fileURLWithPath: c.folder, isDirectory: true)
+    }
+
+    /// 远端现有的历史备份文件名（已按时间从新到旧排好）
+    static func remoteHistoryNames() -> [String] {
+        let c = config
+        if c.mode == "webdav" {
+            guard let cli = webdavClient,
+                  let names = cli.listFileNames() else { return [] }
+      return names.filter { $0.hasPrefix(historyPrefix) && $0.hasSuffix(historySuffix) }
+   .sorted(by: >)
+      }
+        guard let dir = localRemoteDir,
+          let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+        return []
+    }
+        return names.filter { $0.hasPrefix(historyPrefix) && $0.hasSuffix(historySuffix) }
+        .sorted(by: >)
+    }
+
+    /// 远端历史备份份数（给设置页显示）
+    static func remoteHistoryCount() -> Int {
+        remoteHistoryNames().count
+    }
+
+    /// 删掉超出上限的旧历史（只留最新的 N 份）
+    private static func pruneRemoteHistory() {
+        let keep = historyKeep()
+        let names = remoteHistoryNames()
+        guard names.count > keep else { return }
+        let excess = names.dropFirst(keep)
+        let c = config
+        if c.mode == "webdav" {
+            guard let cli = webdavClient else { return }
+            for n in excess { cli.deleteFile(named: n) }
+        } else {
+            guard let dir = localRemoteDir else { return }
+            for n in excess {
+                try? FileManager.default.removeItem(at: dir.appendingPathComponent(n))
+            }
         }
     }
 
@@ -299,9 +394,9 @@ _ = try FileManager.default.replaceItemAt(u, withItemAt: tmp)
             switch self {
             case .off: return "还没开启同步"
             case .upToDate: return "两边数据已经一致"
-            case .pushed(let n): return "已上传 \(n) 个任务到同步文件夹"
-            case .pulled(let n): return "已从同步文件夹下载 \(n) 个任务"
-            case .merged: return "已把同步文件夹里的改动合并进来"
+            case .pushed(let n): return "已上传 \(n) 个任务到 NAS"
+case .pulled(let n): return "已从 NAS 下载 \(n) 个任务"
+            case .merged: return "已把 NAS 上的改动合并进来"
             case .failed(let e): return "同步失败：\(e)"
             }
         }
@@ -351,16 +446,19 @@ _ = try FileManager.default.replaceItemAt(u, withItemAt: tmp)
         }
     }
 
-    private static func push() -> SyncResult {
+private static func push() -> SyncResult {
         let p = currentPayload()
         do {
-            try writeRemote(try encode(p))
-      stampLocalFiles()
+            let data = try encode(p)
+            try writeRemote(data)
+        // 顺带存一份带时间戳的历史，失败不影响主同步结果
+    writeRemoteHistory(data)
+            stampLocalFiles()
             var m = meta
             m.lastSyncAt = Date()
             m.lastAction = "已上传"
             meta = m
-      return .pushed(p.tasks.count)
+            return .pushed(p.tasks.count)
         } catch {
             return .failed(error.localizedDescription)
         }

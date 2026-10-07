@@ -32,6 +32,8 @@ struct BackupSyncSettingsView: View {
     @State private var cloudMeta = CloudSync.currentMeta
     @State private var cloudNotice: String? = nil
     @State private var syncFolderPicker = false
+    /// NAS 上已存的历史备份份数（WebDAV 要 PROPFIND 列目录，异步取）
+    @State private var historyCount = 0
     /// 当前要弹的确认框。同一个视图只能挂一个 .alert，用它把三种确认合并
     @State private var pendingAlert: AlertKind? = nil
 
@@ -108,13 +110,15 @@ struct BackupSyncSettingsView: View {
         } message: {
             Text(alertMessage)
         }
-        .onAppear {
+.onAppear {
             refreshBackupStats()
+      if cloudConfig.isOn { refreshHistoryCount() }
         }
         // 二级页里改完同步配置（比如刚从「飞牛直连」返回），状态要立刻刷新
         .onReceive(NotificationCenter.default.publisher(for: .cloudConfigChanged)) { _ in
             cloudConfig = CloudSync.currentConfig
             cloudMeta = CloudSync.currentMeta
+        if cloudConfig.isOn { refreshHistoryCount() } else { historyCount = 0 }
         }
     }
 
@@ -197,21 +201,35 @@ struct BackupSyncSettingsView: View {
                         .truncationMode(.head)
                 }
 
-                if let at = cloudMeta.lastSyncAt {
-                    HStack {
-                        Text("上次同步")
-                        Spacer()
-                        Text(fmt(at, "M月d日 HH:mm"))
-                            .font(.app(13))
-                            .foregroundColor(.secondary)
-                    }
-                }
+if let at = cloudMeta.lastSyncAt {
+          HStack {
+          Text("上次同步")
+         Spacer()
+           Text(fmt(at, "M月d日 HH:mm"))
+                .font(.app(13))
+                .foregroundColor(.secondary)
+         }
+  }
 
-                Toggle("数据一变就自动同步", isOn: cloudAutoBinding)
+    HStack {
+       Text("NAS 上已备份")
+   Spacer()
+     Text(historyCountText)
+        .foregroundColor(.secondary)
+      .font(.app(13))
+         }
 
-                Toggle("同步时包含照片", isOn: cloudPhotosBinding)
+        Toggle("数据一变就自动同步", isOn: cloudAutoBinding)
 
-                Button("立即同步") { doCloudSync() }
+            Toggle("同步时包含照片", isOn: cloudPhotosBinding)
+
+          Picker("NAS 最多保留", selection: historyKeepBinding) {
+   ForEach([5, 10, 20, 30, 50], id: \.self) { n in
+       Text("\(n) 份").tag(n)
+       }
+          }
+
+  Button("立即同步") { doCloudSync() }
 
                 Button("用 NAS 上的数据覆盖本机") { confirmPullFromCloud() }
 
@@ -241,7 +259,33 @@ struct BackupSyncSettingsView: View {
         } header: {
             Text("同步到 NAS")
         } footer: {
-            Text("飞牛用「连接飞牛」直接填地址即可，不用先在系统文件里连一遍（飞牛 App 没注册文件提供器，系统文件面板里根本选不到）。Windows 版把数据目录指到同一个位置，两边就实时同步了。数据只在你自己的设备之间传。")
+            Text("飞牛用「连接飞牛」直接填地址即可，不用先在系统文件里连一遍（飞牛 App 没注册文件提供器，系统文件面板里根本选不到）。每次同步除了覆盖 cuiban-data.json，还会另存一份带时间戳的历史备份，超出份数自动删最旧的。Windows 版把数据目录指到同一个位置，两边就实时同步了。数据只在你自己的设备之间传。")
+        }
+    }
+
+// MARK: NAS 历史备份份数
+
+    /// 远端历史份数。WebDAV 要发 PROPFIND 列目录，是网络请求不能在 body 里同步算，
+    /// 由 refreshHistoryCount() 异步更新
+    private var historyCountText: String {
+        historyCount > 0 ? "\(historyCount) 份" : "暂无"
+    }
+
+    private var historyKeepBinding: Binding<Int> {
+        Binding(
+            get: { CloudSync.historyKeepBindingValue },
+            set: { v in
+   CloudSync.setHistoryKeep(v)
+    refreshHistoryCount()
+            })
+    }
+
+    /// 列远端目录拿份数。WebDAV 是一次网络请求，放后台并限流：
+/// 切换 Picker、点立即同步都会触发，不限流会连着发好几次
+    private func refreshHistoryCount() {
+        DispatchQueue.global(qos: .utility).async {
+            let n = CloudSync.remoteHistoryCount()
+            DispatchQueue.main.async { historyCount = n }
         }
     }
 
@@ -394,9 +438,20 @@ struct BackupSyncSettingsView: View {
         pendingAlert = .restoreBackup
     }
 
+    /// WebDAV 是网络请求，放后台否则界面会卡住。
+    /// 自动同步那边（App.swift 的 onReceive）本来就在主线程，
+    /// 那边已有 30 秒节流，不够保险——但那是另一条路径，先不动。
     private func doCloudSync() {
-        cloudNotice = CloudSync.syncAndReport()
+        cloudNotice = "同步中…"
+     DispatchQueue.global(qos: .userInitiated).async {
+let msg = CloudSync.syncAndReport()
+            let n = CloudSync.remoteHistoryCount()
+            DispatchQueue.main.async {
+  cloudNotice = msg
         cloudMeta = CloudSync.currentMeta
+       historyCount = n
+   }
+        }
     }
 
     private func confirmPullFromCloud() {
