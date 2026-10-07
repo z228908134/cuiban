@@ -147,12 +147,13 @@ struct CardListView: View {
 
     // MARK: 分类筛选
 
-    /// 只展示「真的有卡片」的分类：没有卡片的类型不占位置，
-    /// 全部为空时这一整条也不显示（不留下无意义的空条）
+    /// 分类筛选栏：只展示「真的有卡片」的分类（数量为 0 的类型不占位置），
+    /// 但只要还有卡片，分类栏本身就常驻显示 —— 不因为只剩一种类型就整条藏掉。
+    /// 一张卡都没有时才不显示（列表本身已经是空状态提示，不需要再占一行）。
     private var chips: some View {
         let used = CardType.allCases.filter { store.count($0) > 0 }
         return Group {
-            if used.count > 1 {
+            if !used.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 8) {
                         chip(title: "全部", count: store.count(nil), active: filter == nil) {
