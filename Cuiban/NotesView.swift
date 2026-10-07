@@ -199,6 +199,8 @@ struct NoteEditorView: View {
     @State private var activeTraits: Set<String> = []
     @State private var photoSource: PhotoSource? = nil
     @State private var showTemplates = false
+    /// 「存为模板」的命名弹窗
+    @State private var saveAsTemplateSheet = false
     @State private var bridge: TextEditBridge
 
     /// 自动保存：内容每变一次 +1，.task(id:) 靠它做「停手 1.2 秒才落盘」的防抖。
@@ -284,11 +286,19 @@ struct NoteEditorView: View {
                 }
                 .ignoresSafeArea()
             }
-            .sheet(isPresented: $showTemplates) {
-                TemplatePickerView { t in
-                    applyTemplate(t)
-                }
-            }
+.sheet(isPresented: $showTemplates) {
+      TemplatePickerView { t in
+      applyTemplate(t)
+        }
+          }
+          .sheet(isPresented: $saveAsTemplateSheet) {
+      SaveAsTemplateSheet(
+            defaultName: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    ? String(displayTitleForTemplate.prefix(20))
+    : title,
+              body: bodyText,
+        styleData: styleData)
+        }
             .onDisappear { saveIfWorth() }
             // 自动保存：标题/正文/样式/图片任一变化都把 dirtyToken 推上去，
             // 下面的 task 会在停手 0.8 秒后落盘（继续输入则 task 被取消重新计时）
@@ -378,6 +388,7 @@ struct NoteEditorView: View {
             Divider()
             Button { bridge.copyAll() } label: { Label("复制全文", systemImage: "doc.on.doc") }
             Button { showTemplates = true } label: { Label("使用模板", systemImage: "doc.plaintext") }
+            Button { saveAsTemplateSheet = true } label: { Label("存为模板", systemImage: "plus.rectangle.on.rectangle") }
             if ImagePicker.cameraAvailable {
                 Button { photoSource = .camera } label: { Label("拍照", systemImage: "camera") }
             }
@@ -450,16 +461,31 @@ struct NoteEditorView: View {
 
     // MARK: 模板
 
-    private func applyTemplate(_ t: NoteTemplate) {
+    /// 存为模板时用的默认名：优先标题，没有标题就拿正文第一条有意义行的前 20 字
+    private var displayTitleForTemplate: String {
+        let t = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !t.isEmpty { return t }
+        if let first = NoteSummary.meaningfulLines(bodyText).first {
+            return String(first.prefix(20))
+        }
+        return "我的模板"
+    }
+
+private func applyTemplate(_ t: NoteTemplate) {
         let tb = TextEditBridge.migrate(t.body)
         let cur = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
         if cur.isEmpty {
             bodyText = tb
+            // 模板带的样式一起还原（老模板没有样式就保持现在的）
+            if let sd = t.styleData, !sd.isEmpty, sd != "[]" {
+                styleData = sd
+                bridge.styles = NoteStyle.decode(sd)
+            }
             if title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                title = t.name
+    title = t.name
             }
         } else {
-            bodyText = bodyText + "\n\n" + tb
+    bodyText = bodyText + "\n\n" + tb
         }
     }
 
@@ -1454,6 +1480,73 @@ final class TextEditBridge {
     }
 }
 
+// MARK: - 存为模板
+
+/// 把当前这条笔记（正文 + 富文本样式）存成模板。
+/// 样式一起存：NoteTemplate 目前只有 name/body 两个字段，styleData 走
+/// body 前缀的约定存不进来，所以这里额外给模板加了 styleData。
+struct SaveAsTemplateSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var store = TemplateStore.shared
+
+    let defaultName: String
+    let body: String
+    let styleData: String
+
+    @State private var name = ""
+    @FocusState private var focused: Bool
+
+    var body: some View {
+        NavigationView {
+            Form {
+                Section("模板名称") {
+                    TextField("给模板起个名字", text: $name)
+                        .font(.app(16))
+                        .focused($focused)
+                }
+
+                Section {
+                    Text(body.isEmpty ? "（正文是空的）"
+                         : String(body.prefix(120)) + (body.count > 120 ? "…" : ""))
+                        .font(.app(12))
+                        .foregroundColor(.secondary)
+                } header: {
+                    Text("将保存的内容")
+                } footer: {
+                    Text("模板会出现在「使用模板」的列表里。以后新建笔记时点一下就能套用这份内容和格式。")
+                }
+            }
+            .navigationTitle("存为模板")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("取消") { dismiss() }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("保存") { save() }
+                        .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
+        .onAppear {
+            name = defaultName
+            focused = true
+        }
+    }
+
+    private func save() {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !n.isEmpty, !body.isEmpty else { return }
+        var t = NoteTemplate(name: n, body: body)
+        // 有样式才存，空的 styleData 写进去会让模板列表变重
+        let s = NoteStyle.decode(styleData)
+        if !s.isEmpty { t.styleData = styleData }
+        store.upsert(t)
+        dismiss()
+    }
+}
+
 // MARK: - 模板选择页
 
 struct TemplatePickerView: View {
@@ -1634,15 +1727,16 @@ struct TemplateEditView: View {
                     Button("取消") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("保存") {
-                        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !n.isEmpty else { return }
-                        var t = template ?? NoteTemplate(name: n, body: bodyText)
-                        t.name = n
-                        t.body = bodyText
-                        templateStore.upsert(t)
-                        dismiss()
-                    }
+Button("保存") {
+      let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+          guard !n.isEmpty else { return }
+            var t = template ?? NoteTemplate(name: n, body: bodyText)
+   t.name = n
+            t.body = bodyText
+            // 编辑只改文字，别把原来带的样式弄丢
+    templateStore.upsert(t)
+              dismiss()
+    }
                     .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }

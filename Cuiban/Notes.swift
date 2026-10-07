@@ -180,6 +180,10 @@ struct NoteTemplate: Identifiable, Codable, Equatable {
     var id: String = UUID().uuidString
     var name: String
     var body: String
+    /// 富文本样式片段 JSON（和 NoteItem.styleData 同格式）。
+    /// 「存为模板」时把原笔记的样式一起带过来，套用时格式也还原。
+    /// 可选字段，老模板没有也能解码。
+    var styleData: String? = nil
 }
 
 final class TemplateStore: ObservableObject {

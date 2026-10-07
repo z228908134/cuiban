@@ -160,10 +160,16 @@ struct BackupSyncSettingsView: View {
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+
+            Picker("最多保留", selection: maxBackupsBinding) {
+                ForEach([5, 10, 20, 30, 50], id: \.self) { n in
+                    Text("\(n) 份").tag(n)
+                }
+            }
         } header: {
             Text("本地备份")
         } footer: {
-            Text("数据存在 App 本机，最多留 10 份，超出自动删最旧的。注意：卸载 App 会一起没掉，保命请靠下面的 NAS 同步或手动导出。")
+            Text("数据存在 App 本机，超出份数自动删最旧的。注意：卸载 App 会一起没掉，保命请靠下面的 NAS 同步或手动导出。")
         }
     }
 
@@ -247,6 +253,19 @@ struct BackupSyncSettingsView: View {
 
     private var backupPhotosBinding: Binding<Bool> {
         settingsBoolBinding(\.backupIncludePhotos)
+    }
+
+    /// 改保留份数后立刻按新值修剪，不用等下一次自动备份
+    private var maxBackupsBinding: Binding<Int> {
+        Binding(
+            get: { store.settings.maxBackups > 0 ? store.settings.maxBackups : BackupStore.keepDefault },
+            set: { v in
+                var s = store.settings
+                s.maxBackups = v
+                store.updateSettingsPublic(s)
+                BackupStore.prune(keep: v)
+                refreshBackupStats()
+            })
     }
 
     private func settingsBoolBinding(_ kp: WritableKeyPath<AppSettings, Bool>) -> Binding<Bool> {

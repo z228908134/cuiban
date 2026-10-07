@@ -181,8 +181,10 @@ struct AppSettings: Codable, Equatable {
     var theme: ThemeMode = .system
     /// 自动备份到 App 本地（Documents/Backups）
     var autoBackup: Bool = true
-    /// 备份文件里是否内嵌照片
+/// 备份文件里是否内嵌照片
     var backupIncludePhotos: Bool = true
+    /// 本地备份最多留几份（超出删最旧的）。0 或非法值按 keepDefault 兜底。
+    var maxBackups: Int = 20
     /// 全局字号系数（1.0 = 标准）。真正的值存在 FontScale（UserDefaults）里，
     /// 这里跟着存一份，为了跟备份/恢复走
     var fontScale: Double = 1.0
@@ -192,12 +194,12 @@ struct AppSettings: Codable, Equatable {
     // 容错解码：以后再加设置项，老版本存的设置也不会被清空
     enum CodingKeys: String, CodingKey {
         case defaultIntervalMinutes, snoozeMinutes, soundEnabled, keepAlive, theme,
-             autoBackup, backupIncludePhotos, fontScale
+       autoBackup, backupIncludePhotos, maxBackups, fontScale
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
-        let d = AppSettings()
+   let d = AppSettings()
         defaultIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .defaultIntervalMinutes) ?? d.defaultIntervalMinutes
         snoozeMinutes = try c.decodeIfPresent(Int.self, forKey: .snoozeMinutes) ?? d.snoozeMinutes
         soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? d.soundEnabled
@@ -205,6 +207,7 @@ struct AppSettings: Codable, Equatable {
         theme = try c.decodeIfPresent(ThemeMode.self, forKey: .theme) ?? d.theme
         autoBackup = try c.decodeIfPresent(Bool.self, forKey: .autoBackup) ?? d.autoBackup
         backupIncludePhotos = try c.decodeIfPresent(Bool.self, forKey: .backupIncludePhotos) ?? d.backupIncludePhotos
+  maxBackups = try c.decodeIfPresent(Int.self, forKey: .maxBackups) ?? d.maxBackups
         fontScale = try c.decodeIfPresent(Double.self, forKey: .fontScale) ?? d.fontScale
     }
 }

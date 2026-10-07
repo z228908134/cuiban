@@ -32,7 +32,7 @@ struct BackupEntry: Identifiable {
 enum BackupStore {
 
     /// 本地自动备份保留的份数
-    static let keepDefault = 10
+    static let keepDefault = 20
     /// 自动备份节流：10 分钟内的多次改动合并为一份
     static let autoThrottle: TimeInterval = 10 * 60
 
@@ -70,16 +70,17 @@ enum BackupStore {
         let t = tasks
         let s = settings
         DispatchQueue.global(qos: .utility).async {
-            _ = writeBackup(tasks: t, settings: s, tag: "自动", keep: keepDefault)
+            _ = writeBackup(tasks: t, settings: s, tag: "自动", keep: currentKeep(s))
         }
     }
 
     // MARK: 写备份
 
-    /// 写一份本地备份，并按 keep 修剪旧的
+/// 写一份本地备份，并按 keep 修剪旧的
+    /// keep 传 nil 时按用户在设置里选的份数来（手动备份走这条）
     @discardableResult
     static func writeBackup(tasks: [TaskItem], settings: AppSettings,
-                            tag: String, keep: Int = keepDefault) -> URL? {
+                            tag: String, keep: Int? = nil) -> URL? {
         let payload = buildPayload(tasks: tasks, settings: settings)
         let enc = JSONEncoder()
         enc.dateEncodingStrategy = .iso8601
@@ -90,7 +91,8 @@ enum BackupStore {
         } catch {
             return nil
         }
-        if keep > 0 { prune(keep: keep) }
+        let k = keep ?? currentKeep(settings)
+        if k > 0 { prune(keep: k) }
         return url
     }
 
@@ -182,15 +184,23 @@ enum BackupStore {
             out.append(BackupEntry(id: url, url: url, date: date,
                                    sizeText: sizeText(size), title: n))
         }
-        return out.sorted { $0.date > $1.date }
+return out.sorted { $0.date > $1.date }
     }
 
+    /// 删掉超出保留份数的旧备份。保留份数取 AppSettings.maxBackups，
+    /// 用户可以在备份页自己改（老版本没这个字段时兜底 20）。
     static func prune(keep: Int) {
         let entries = listBackups()
         guard entries.count > keep else { return }
         for e in entries.suffix(entries.count - keep) {
             try? FileManager.default.removeItem(at: e.url)
         }
+    }
+
+    /// 当前生效的保留份数（写盘后立即按新值修剪）
+    static func currentKeep(_ settings: AppSettings) -> Int {
+        let k = settings.maxBackups
+        return k > 0 ? k : keepDefault
     }
 
     static func sizeText(_ bytes: Int64) -> String {
