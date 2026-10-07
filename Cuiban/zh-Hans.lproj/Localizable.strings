@@ -1,0 +1,42 @@
+/* 催办 — 简体中文本地化
+ *
+ * iOS 系统提供的选择菜单（剪切 / 复制 / 粘贴 / 全选 / 替换 / 自动填充…）走的是
+ * **系统语言**，不跟 App 界面语言。但只要 App 声明支持 zh-Hans 并带上这个文件，
+ * 系统就会认为该 App 的主要语言是中文，菜单随之显示中文。
+ *
+ * 这些 key 是 UITextView / UITextField 选择菜单的官方文案，不要改 key，只改译文。
+ */
+
+/* 选词菜单 */
+"sh.action.Cut" = "剪切";
+"sh.action.Copy" = "复制";
+"sh.action.Paste" = "粘贴";
+"sh.action.PasteAndMatchStyle" = "粘贴并匹配样式";
+"sh.action.Delete" = "删除";
+"sh.action.SelectAll" = "全选";
+"sh.action.Select" = "选择";
+"sh.action.Deselect" = "取消选择";
+"sh.action.Replace" = "替换";
+"sh.action.Translate" = "翻译";
+"sh.action.Lookup" = "查询";
+"sh.action.Share" = "共享";
+"sh.action.SpeakSelection" = "朗读所选项";
+
+/* 浮动工具栏 */
+"sh.toolbar.done" = "完成";
+"sh.toolbar.cancel" = "取消";
+
+/* 拖放 */
+"sh.drag.destinationHint" = "拖到此处以移动";
+
+/* 输入法的候选菜单相关 */
+"sh.action.AddEmoji" = "添加表情";
+"sh.action.SmartDashesType" = "智能破折号";
+"sh.action.SmartQuotesType" = "智能引号";
+"sh.action.AutoTextReplacement" = "自动文本替换";
+"sh.action.AutoCapitalization" = "自动大写";
+"sh.action.SpellChecking" = "拼写检查";
+"sh.action.KeyboardHints" = "键盘提示";
+"sh.action.PencilInput" = "手写输入";
+"sh.action.Dictation" = "听写";
+"sh.action.EmojiPicker" = "表情符号";

@@ -67,11 +67,19 @@ struct CardItem: Identifiable, Codable, Equatable {
         return "未命名卡片"
     }
 
+    /// 复制用的卡号：纯数字，不带任何空格。
+    /// 有些银行转账 / 识别 OCR 要求连续数字，带空格会被判为格式错误。
+    var numberPlain: String {
+        let digits = number.filter { $0.isNumber }
+        return digits.isEmpty ? number : digits
+    }
+
     /// 「复制全部」的内容：一眼能贴给别人的完整信息
     var copyAllText: String {
         var lines: [String] = []
         lines.append("\(type.label) · \(bank.isEmpty ? "未填银行" : bank)")
-        if !number.isEmpty { lines.append("卡号 " + numberGrouped) }
+        // 复制一律用不带空格的卡号
+        if !numberPlain.isEmpty { lines.append("卡号 " + numberPlain) }
         if !holder.isEmpty { lines.append("户主 " + holder) }
         if !note.isEmpty { lines.append("备注 " + note) }
         return lines.joined(separator: "\n")
@@ -114,9 +122,14 @@ final class CardStore: ObservableObject {
         }
         let kw = keyword.trimmingCharacters(in: .whitespaces)
         if !kw.isEmpty {
+            // 搜卡号时忽略空格：显示是「6217 9318 ...」，用户多半会直接粘带空格的进来，
+            // 也可能只粘其中一段，所以两边都去掉空格再比
+            let kwDigits = kw.filter { $0.isNumber }
             list = list.filter {
-                $0.bank.contains(kw) || $0.number.contains(kw) || $0.holder.contains(kw)
-                    || $0.note.contains(kw)
+                $0.bank.contains(kw) || $0.holder.contains(kw) || $0.note.contains(kw)
+                    || (kwDigits.isEmpty
+                        ? $0.number.contains(kw)
+                        : $0.numberPlain.contains(kwDigits))
             }
         }
         return list.sorted { $0.updatedAt > $1.updatedAt }

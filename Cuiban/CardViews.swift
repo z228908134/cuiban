@@ -28,7 +28,7 @@ struct CardListView: View {
         var c = CardItem()
         c.number = String(digits.prefix(24))
         alertInfo = AlertInfo(title: "识别到卡号",
-                              message: c.numberGrouped + "\n\n要去填写完整信息吗？",
+                              message: c.numberPlain + "\n\n要去填写完整信息吗？",
                               okTitle: "去填写") { editing = c }
     }
 
@@ -147,18 +147,27 @@ struct CardListView: View {
 
     // MARK: 分类筛选
 
+    /// 只展示「真的有卡片」的分类：没有卡片的类型不占位置，
+    /// 全部为空时这一整条也不显示（不留下无意义的空条）
     private var chips: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                chip(title: "全部", count: store.count(nil), active: filter == nil) { filter = nil }
-                ForEach(CardType.allCases) { t in
-                    chip(title: t.label, count: store.count(t), active: filter == t) {
-                        filter = filter == t ? nil : t
+        let used = CardType.allCases.filter { store.count($0) > 0 }
+        return Group {
+            if used.count > 1 {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        chip(title: "全部", count: store.count(nil), active: filter == nil) {
+                            filter = nil
+                        }
+                        ForEach(used) { t in
+                            chip(title: t.label, count: store.count(t), active: filter == t) {
+                                filter = filter == t ? nil : t
+                            }
+                        }
                     }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
                 }
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
         }
     }
 
@@ -233,7 +242,7 @@ struct CardListView: View {
                         .contextMenu {
                             // 长按只做「复制」，编辑和删除走左滑
                             Button {
-                                UIPasteboard.general.string = c.numberGrouped
+                                UIPasteboard.general.string = c.numberPlain
                                 toast = "已复制卡号"
                             } label: { Label("复制卡号", systemImage: "doc.on.doc") }
                             Button {
