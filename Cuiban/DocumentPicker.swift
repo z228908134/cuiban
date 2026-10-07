@@ -57,3 +57,74 @@ struct ImportFileSheet: UIViewControllerRepresentable {
         }
     }
 }
+
+/// 选一个「文件夹」（用于指定同步位置：飞牛 WebDAV / iCloud 云盘 / 本机目录都行）。
+/// asCopy: false 拿到的是安全作用域 URL，读写前需要 startAccessingSecurityScopedResource。
+struct FolderPickerSheet: UIViewControllerRepresentable {
+    let onPick: (URL) -> Void
+
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let vc = UIDocumentPickerViewController(forOpeningContentTypes: [.folder],
+                                                asCopy: false)
+        vc.directoryURL = URL(fileURLWithPath:
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0])
+        vc.allowsMultipleSelection = false
+        vc.delegate = context.coordinator
+        return vc
+    }
+
+    func updateUIViewController(_ vc: UIDocumentPickerViewController, context: Context) {}
+
+    func makeCoordinator() -> Coordinator { Coordinator(onPick: onPick) }
+
+    final class Coordinator: NSObject, UIDocumentPickerDelegate {
+        let onPick: (URL) -> Void
+        init(onPick: @escaping (URL) -> Void) { self.onPick = onPick }
+
+        func documentPicker(_ controller: UIDocumentPickerViewController,
+                            didPickDocumentsAt urls: [URL]) {
+            guard let u = urls.first else { return }
+            // 持续持有安全作用域访问权，否则 App 一退出就再也读不到这个目录
+            let ok = u.startAccessingSecurityScopedResource()
+            if ok {
+                CloudSyncBookmark.shared.keep(u)
+            }
+            onPick(u)
+        }
+    }
+}
+
+/// 保存用户选中的同步文件夹的安全作用域书签，
+/// 这样 App 下次启动还能访问同一个目录（iOS 的沙盒机制要求）。
+final class CloudSyncBookmark {
+    static let shared = CloudSyncBookmark()
+    private(set) var url: URL?
+
+    private init() { load() }
+
+    private var defaultsKey: String { "cloudsync.bookmark" }
+
+    func keep(_ u: URL) {
+        url = u
+        do {
+            let d = try u.bookmarkData(options: .minimalBookmark,
+                                       includingResourceValuesForKeys: nil,
+                                       relativeTo: nil)
+            UserDefaults.standard.set(d, forKey: defaultsKey)
+        } catch {
+            print("存书签失败：\(error.localizedDescription)")
+        }
+    }
+
+    private func load() {
+        guard let d = UserDefaults.standard.data(forKey: defaultsKey) else { return }
+        var stale = false
+        if let u = try? URL(resolvingBookmarkData: d,
+                           options: .minimalBookmark,
+                           relativeTo: nil,
+                           bookmarkDataIsStale: &stale) {
+            if u.startAccessingSecurityScopedResource() { url = u }
+            if stale { keep(u) }
+        }
+    }
+}

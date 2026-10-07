@@ -132,6 +132,7 @@ final class NoteStore: ObservableObject {
         let enc = JSONEncoder()
         enc.outputFormatting = .prettyPrinted
         if let d = try? enc.encode(notes) { try? d.write(to: file) }
+        NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
     }
 
     var sorted: [NoteItem] {

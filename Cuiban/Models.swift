@@ -249,6 +249,8 @@ final class TaskStore: ObservableObject {
         if let d = try? enc.encode(tasks) { try? d.write(to: tasksFile) }
         if let d = try? enc.encode(settings) { try? d.write(to: settingsFile) }
         BackupStore.autoBackupIfNeeded(tasks: tasks, settings: settings)
+        // 任何数据变化都通知一次：根视图据此触发「同步到 NAS」
+        NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
     }
 
     func persistSettings() {

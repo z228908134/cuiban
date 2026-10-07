@@ -194,6 +194,67 @@ struct SettingsView: View {
                     }
                 }
 
+                // MARK: 同步到 NAS / 文件夹
+
+                Section(header: Text("同步到 NAS / 文件夹"),
+                        footer: Text("选一个你自己的文件夹（飞牛 WebDAV、SMB 挂载、iCloud 云盘、OneDrive 都可以），数据一变就自动写进去。Windows 版把数据目录指到同一个文件夹，两边就实时同步了。数据只在你自己的设备之间传，不经过任何服务器。")) {
+                    if cloudConfig.isOn {
+                        HStack {
+                            Label("同步已开启", systemImage: "checkmark.icloud.fill")
+                                .foregroundColor(.green)
+                            Spacer()
+                        }
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("同步位置")
+                                .font(.app(13))
+                                .foregroundColor(.secondary)
+                            Text(cloudConfig.folder)
+                                .font(.app(11))
+                                .foregroundColor(.secondary)
+                                .lineLimit(2)
+                                .truncationMode(.head)
+                        }
+
+                        if let at = cloudMeta.lastSyncAt {
+                            HStack {
+                                Text("上次同步")
+                                Spacer()
+                                Text(fmt(at, "M月d日 HH:mm"))
+                                    .font(.app(13))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+
+                        Toggle("数据一变就自动同步", isOn: cloudAutoBinding)
+
+                        Toggle("同步时包含照片", isOn: cloudPhotosBinding)
+
+                        Button("立即同步") { doCloudSync() }
+
+                        Button("从同步文件夹拉取（用文件夹里的数据覆盖本机）") {
+                            confirmPullFromCloud()
+                        }
+
+                        if let n = cloudNotice {
+                            Text(n)
+                                .font(.app(12))
+                                .foregroundColor(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+
+                        Button("停止同步", role: .destructive) {
+                            cloudConfirmDisable = true
+                        }
+                    } else {
+                        Button {
+                            syncFolderPicker = true
+                        } label: {
+                            Label("选择同步文件夹", systemImage: "folder.badge.plus")
+                        }
+                    }
+                }
+
                 // MARK: 备份与恢复
 
                 Section(header: Text("备份与恢复"),
@@ -289,6 +350,28 @@ struct SettingsView: View {
         .sheet(isPresented: $importOpen) {
             ImportFileSheet { url in handleImport(url) }
         }
+        .sheet(isPresented: $syncFolderPicker) {
+            FolderPickerSheet { url in
+                syncFolderPicker = false
+                handleFolderPicked(url)
+            }
+        }
+        .alert("用文件夹里的数据覆盖本机？", isPresented: $cloudConfirmPull) {
+            Button("覆盖", role: .destructive) { doPullFromCloud() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("本机现有的 \(store.tasks.count) 个任务会被文件夹里的数据替换。已经先在本地存了一份备份，出问题可以从「备份与恢复」里退回来。")
+        }
+        .alert("停止同步？", isPresented: $cloudConfirmDisable) {
+            Button("停止", role: .destructive) {
+                CloudSync.disable()
+                cloudConfig = CloudSync.currentConfig
+                cloudNotice = "已停止同步，本机数据不受影响"
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("只是不再往文件夹写数据，本机数据不受影响。")
+        }
         .onAppear {
             store.refreshAuth()
             refreshPhotoStats()
@@ -297,6 +380,79 @@ struct SettingsView: View {
         .onReceive(Timer.publish(every: 4, on: .main, in: .common).autoconnect()) { _ in
             store.refreshPendingCount()
         }
+    }
+
+    // MARK: 同步状态
+
+    @State private var cloudConfig = CloudSync.currentConfig
+    @State private var cloudMeta = CloudSync.currentMeta
+    @State private var cloudNotice: String? = nil
+    @State private var syncFolderPicker = false
+    @State private var cloudConfirmDisable = false
+    @State private var cloudConfirmPull = false
+
+    private var cloudAutoBinding: Binding<Bool> {
+        Binding(
+            get: { cloudConfig.autoSync },
+            set: { v in
+                cloudConfig.autoSync = v
+                CloudSync.configure(folder: cloudConfig.folder,
+                                   includePhotos: cloudConfig.includePhotos,
+                                   autoSync: v)
+            })
+    }
+
+    private var cloudPhotosBinding: Binding<Bool> {
+        Binding(
+            get: { cloudConfig.includePhotos },
+            set: { v in
+                cloudConfig.includePhotos = v
+                CloudSync.configure(folder: cloudConfig.folder,
+                                   includePhotos: v,
+                                   autoSync: cloudConfig.autoSync)
+                _ = CloudSync.syncNow()
+                cloudMeta = CloudSync.currentMeta
+            })
+    }
+
+    private func doCloudSync() {
+        let msg = CloudSync.syncAndReport()
+        cloudMeta = CloudSync.currentMeta
+        cloudNotice = msg
+    }
+
+    /// 用同步文件夹里的数据覆盖本机（先自动备份一份，避免误操作丢数据）
+    private func confirmPullFromCloud() {
+        guard !cloudConfig.folder.isEmpty else { return }
+        let dir = (cloudConfig.folder as NSString).appendingPathComponent(cloudConfig.remoteName)
+        guard FileManager.default.fileExists(atPath: dir) else {
+            cloudNotice = "同步文件夹里还没有数据，先在另一端上传一次"
+            return
+        }
+        cloudConfirmPull = true
+    }
+
+    private func doPullFromCloud() {
+        // 覆盖前先在本地存一份，出问题能退回来
+        BackupStore.autoBackupIfNeeded(tasks: store.tasks, settings: store.settings)
+        cloudNotice = CloudSync.syncAndReport()
+        cloudMeta = CloudSync.currentMeta
+    }
+
+    /// 选好文件夹后：先确认能不能写，再开启同步
+    private func handleFolderPicked(_ url: URL) {
+        let path = url.path
+        guard CloudSync.isFolderWritable(path) else {
+            cloudNotice = "这个文件夹读不到（可能没连上 NAS，或没有写入权限）"
+            return
+        }
+        CloudSync.configure(folder: path,
+                            includePhotos: cloudConfig.includePhotos,
+                            autoSync: cloudConfig.autoSync)
+        cloudConfig = CloudSync.currentConfig
+        // 立刻同步一次：远端有数据就拉下来，没有就把本机推上去
+        cloudNotice = CloudSync.syncAndReport()
+        cloudMeta = CloudSync.currentMeta
     }
 
     // MARK: 备份相关

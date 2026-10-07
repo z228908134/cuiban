@@ -84,9 +84,17 @@ struct RootView: View {
             AlarmLoop.shared.start()
             store.refreshAuth()
             NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
+            // 进 App 先同步一次：把 NAS 上的新数据拉下来
+            if CloudSync.currentConfig.isOn {
+                _ = CloudSync.syncNow()
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: FontScale.didChange)) { _ in
             withAnimation(.easeInOut(duration: 0.12)) { fontRev &+= 1 }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cuibanDataChanged)) { _ in
+            // 任何数据变化都触发一次同步（内部有 30 秒节流，不会频繁写网络）
+            CloudSync.autoSyncIfNeeded()
         }
         .preferredColorScheme(store.settings.theme.colorScheme)
     }

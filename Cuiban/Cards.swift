@@ -112,6 +112,7 @@ final class CardStore: ObservableObject {
         let enc = JSONEncoder()
         enc.outputFormatting = .prettyPrinted
         if let d = try? enc.encode(cards) { try? d.write(to: file, options: .atomic) }
+        NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
     }
 
     /// 筛选后的卡片（type = nil 表示全部）
