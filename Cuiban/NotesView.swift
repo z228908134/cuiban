@@ -633,11 +633,28 @@ struct NoteBodyEditor: UIViewRepresentable {
 
         // MARK: 点勾选框打勾（触摸入口拦截，见 CheckboxTextView）
 
-        /// 命中判定：点落在某个勾选行「方框」的热区里 → 返回该行范围 + 标记位置 + 标记长度 + 当前勾选态。
-        /// 用 caretRect 拿方框位置：它由系统按 inset / 滚动偏移算好，永远和光标所见一致，
-        /// 不再自己换算 textContainer 坐标（之前那套换算就是一直不准的根源）。
-        /// 热区故意放得很大（手指点不准 19pt 的方框），所以收集所有命中的行、
-        /// 取离手指最近的那个，避免上下相邻两行都是待办时点错行。
+        /// 标记字符在屏幕上的矩形：firstRect（字符实际渲染矩形）与 caretRect（光标矩形）取并集。
+        /// 两种系统 API 的坐标理解若有偏差，并集能一并覆盖。
+        private static func boxRect(tv: UITextView, markLoc: Int, markLen: Int) -> CGRect? {
+            var rects: [CGRect] = []
+            if let p0 = tv.position(from: tv.beginningOfDocument, offset: markLoc) {
+                rects.append(tv.caretRect(for: p0))
+                if markLen > 0,
+                   let p1 = tv.position(from: tv.beginningOfDocument, offset: markLoc + markLen),
+                   let r = tv.range(from: p0, to: p1) {
+                    let fr = tv.firstRect(for: r)
+                    if fr.width > 0 || fr.height > 0 { rects.append(fr) }
+                }
+            }
+            guard !rects.isEmpty else { return nil }
+            let u = rects.dropFirst().reduce(rects[0]) { $0.union($1) }
+            guard u.width > 0, u.height > 0 else { return nil }
+            return u
+        }
+
+        /// 命中判定：点落在某个勾选行「方框」附近 → 返回该行范围 + 标记位置 + 标记长度 + 当前勾选态。
+        /// 位置全部由系统给（firstRect + caretRect 并集）再统一放宽成一大块热区。
+        /// 收集所有命中的行、取离手指最近的那一行，避免上下相邻两行都是待办时点错行。
         private static func checkboxHit(at point: CGPoint, in tv: UITextView)
             -> (range: NSRange, markLoc: Int, markLen: Int, checked: Bool)? {
             let ns = (tv.text ?? "") as NSString
@@ -645,31 +662,24 @@ struct NoteBodyEditor: UIViewRepresentable {
             var best: (range: NSRange, markLoc: Int, markLen: Int, checked: Bool)?
             var bestDist: CGFloat = .greatestFiniteMagnitude
 
-            func consider(_ range: NSRange, _ markLoc: Int, _ markLen: Int,
-                          _ checked: Bool, _ box: CGRect) {
-                // 点到方框中心的距离最近的胜出
-                let cx = box.midX, cy = box.midY
-                let dx = point.x - cx, dy = point.y - cy
-                let d = sqrt(dx * dx + dy * dy)
-                if d < bestDist {
-                    bestDist = d
-                    best = (range, markLoc, markLen, checked)
-                }
-            }
-
             while loc < ns.length {
                 let lr = ns.lineRange(for: NSRange(location: loc, length: 0))
                 if lr.length > 0, let info = TextEditBridge.markInfo(in: ns.substring(with: lr)) {
                     let markLoc = lr.location + info.loc
-                    if let pos = tv.position(from: tv.beginningOfDocument, offset: markLoc) {
-                        let cr = tv.caretRect(for: pos)
-                        // 方框 21pt 仍然不好点：热区左右各放宽一截，覆盖整个方框 + 后面的空格
-                        let hot = CGRect(x: cr.minX - 16,
-                                         y: cr.minY - 8,
-                                         width: 30 + CGFloat(info.markLen) * 18,
-                                         height: cr.height + 16)
+                    if let box = boxRect(tv: tv, markLoc: markLoc, markLen: info.markLen) {
+                        // 热区：左右各放宽一截（覆盖方框 + 后面的空格），上下也留余量
+                        let hot = CGRect(x: box.minX - 22,
+                                         y: box.minY - 14,
+                                         width: box.width + 52,
+                                         height: box.height + 26)
                         if hot.contains(point) {
-                            consider(lr, markLoc, info.markLen, info.checked, hot)
+                            let dx = point.x - box.midX
+                            let dy = point.y - box.midY
+                            let d = sqrt(dx * dx + dy * dy)
+                            if d < bestDist {
+                                bestDist = d
+                                best = (lr, markLoc, info.markLen, info.checked)
+                            }
                         }
                     }
                     // 兜底：让系统告诉我们这个点最近的字符位置（同样是系统算坐标，最稳）
@@ -677,8 +687,7 @@ struct NoteBodyEditor: UIViewRepresentable {
                         let idx = tv.offset(from: tv.beginningOfDocument, to: near)
                         // 方框本身 + 方框后面那个空格都算点在框上
                         if idx >= markLoc && idx <= markLoc + info.markLen {
-                            consider(lr, markLoc, info.markLen, info.checked,
-                                     CGRect(x: point.x, y: point.y, width: 1, height: 1))
+                            best = (lr, markLoc, info.markLen, info.checked)
                         }
                     }
                 }
@@ -754,26 +763,26 @@ final class CheckboxTextView: UITextView {
 /// 太小、也太难点。自己画能精确控制大小和粗细。
 /// 文字里存的仍然是 ☐/☑ 字符（万一附件没挂上，也能看到方框而不是空白）。
 enum CheckboxArt {
-    /// 21pt 画布、19pt 方框，比正文（16pt）还大一点，好看也好点
-    static let size = CGSize(width: 21, height: 21)
+    /// 24pt 画布、20pt 方框，比正文（16pt）明显大一圈，好看也好点
+    static let size = CGSize(width: 24, height: 24)
     static let checked = image(checked: true)
     static let unchecked = image(checked: false)
 
     static func image(checked: Bool) -> UIImage {
         UIGraphicsImageRenderer(size: size).image { _ in
-            let rect = CGRect(x: 1.5, y: 1.5, width: 18, height: 18)
-            let box = UIBezierPath(roundedRect: rect, cornerRadius: 4.5)
+            let rect = CGRect(x: 2, y: 2, width: 20, height: 20)
+            let box = UIBezierPath(roundedRect: rect, cornerRadius: 5)
             if checked {
                 // 勾过的：框线浅一点，勾子深一点，整行随之变灰
                 UIColor.label.withAlphaComponent(0.34).setStroke()
-                box.lineWidth = 1.4
+                box.lineWidth = 1.5
                 box.stroke()
 
                 let mark = UIBezierPath()
-                mark.move(to: CGPoint(x: 5.4, y: 10.6))
-                mark.addLine(to: CGPoint(x: 8.4, y: 13.6))
-                mark.addLine(to: CGPoint(x: 15.6, y: 6.4))
-                mark.lineWidth = 2.1
+                mark.move(to: CGPoint(x: 6, y: 12))
+                mark.addLine(to: CGPoint(x: 9.4, y: 15.4))
+                mark.addLine(to: CGPoint(x: 17.4, y: 7))
+                mark.lineWidth = 2.3
                 mark.lineCapStyle = .round
                 mark.lineJoinStyle = .round
                 UIColor.label.withAlphaComponent(0.55).setStroke()
@@ -781,7 +790,7 @@ enum CheckboxArt {
             } else {
                 // 未勾选：清晰的深灰细描边空心方框
                 UIColor.label.withAlphaComponent(0.62).setStroke()
-                box.lineWidth = 1.7
+                box.lineWidth = 1.8
                 box.stroke()
             }
         }
