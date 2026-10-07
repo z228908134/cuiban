@@ -12,6 +12,8 @@ struct CardListView: View {
     @State private var showingAdd = false
     /// 列表页统一提示弹窗
     @State private var alertInfo: AlertInfo? = nil
+    /// 复制成功的轻提示
+    @State private var toast: String? = nil
 
     private func pickFromClipboard() {
         let text = UIPasteboard.general.string ?? ""
@@ -83,6 +85,24 @@ struct CardListView: View {
                   message: Text(info.message),
                   primaryButton: .destructive(Text(info.okTitle)) { info.onOK?() },
                   secondaryButton: .cancel(Text("取消")))
+        }
+        .overlay(alignment: .bottom) {
+            if let t = toast {
+                Text(t)
+                    .font(.app(13, weight: .medium))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Capsule().fill(Color.black.opacity(0.75)))
+                    .padding(.bottom, 24)
+                    .transition(.opacity)
+            }
+        }
+        .onChange(of: toast) { v in
+            guard v != nil else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.6) {
+                withAnimation(.easeOut(duration: 0.2)) { toast = nil }
+            }
         }
     }
 
@@ -184,22 +204,29 @@ struct CardListView: View {
             ScrollView {
                 LazyVStack(spacing: 10) {
                     ForEach(list) { c in
-                        Button {
-                            detail = c
-                        } label: {
-                            CardRow(card: c)
-                        }
-                        .buttonStyle(.plain)
-                        .contextMenu {
-                            Button {
-                                editing = c
-                            } label: { Label("编辑", systemImage: "pencil") }
-                            Button(role: .destructive) {
+                        // 左滑露出「编辑 / 删除」，和系统列表的左滑一致
+                        CardSwipeRow(
+                            onTap: { detail = c },
+                            onEdit: { editing = c },
+                            onDelete: {
                                 alertInfo = AlertInfo(
                                     title: "删除这张卡片？",
                                     message: c.displayName,
                                     okTitle: "删除") { store.delete(id: c.id) }
-                            } label: { Label("删除", systemImage: "trash") }
+                            }
+                        ) {
+                            CardRow(card: c)
+                        }
+                        .contextMenu {
+                            // 长按只做「复制」，编辑和删除走左滑
+                            Button {
+                                UIPasteboard.general.string = c.numberGrouped
+                                toast = "已复制卡号"
+                            } label: { Label("复制卡号", systemImage: "doc.on.doc") }
+                            Button {
+                                UIPasteboard.general.string = c.copyAllText
+                                toast = "已复制这张卡片的全部信息"
+                            } label: { Label("复制全部", systemImage: "doc.on.clipboard") }
                         }
                     }
                 }
@@ -246,6 +273,95 @@ struct CardRow: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color(UIColor.secondarySystemGroupedBackground))
         )
+    }
+}
+
+// MARK: - 卡片左滑操作行
+
+/// ScrollView 里没有系统 swipeActions，自绘一个：左滑露出「编辑 / 删除」，
+/// 再滑回或点其它地方收起。行为对齐系统列表的左滑。
+struct CardSwipeRow<Content: View>: View {
+    var onTap: () -> Void
+    var onEdit: () -> Void
+    var onDelete: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @State private var revealed = false
+    @State private var isDragging = false
+    @State private var dragX: CGFloat = 0
+    private let revealWidth: CGFloat = 140
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 0) {
+                Button {
+                    close()
+                    onEdit()
+                } label: {
+                    op(icon: "pencil", title: "编辑",
+                       color: Color(red: 0.0, green: 0.48, blue: 1.0))
+                        .frame(width: 70)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    close()
+                    onDelete()
+                } label: {
+                    op(icon: "trash", title: "删除", color: .red)
+                        .frame(width: 70)
+                }
+                .buttonStyle(.plain)
+            }
+            content()
+                .background(Color(UIColor.systemBackground))
+                .offset(x: offset)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if revealed { close() } else { onTap() }
+                }
+                .gesture(swipe)
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
+    private var offset: CGFloat {
+        let base: CGFloat = revealed ? -revealWidth : 0
+        return isDragging ? min(0, max(-revealWidth - 40, base + dragX)) : base
+    }
+
+    private func close() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { revealed = false }
+    }
+
+    private var swipe: some Gesture {
+        DragGesture(minimumDistance: 18)
+            .onChanged { v in
+                // 竖向滑动留给 ScrollView，横向为主时才接管
+                guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                isDragging = true
+                dragX = v.translation.width
+            }
+            .onEnded { v in
+                guard isDragging else { return }
+                isDragging = false
+                dragX = 0
+                let target = (revealed ? -revealWidth : 0) + v.translation.width
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    revealed = target < -revealWidth / 2
+                }
+            }
+    }
+
+    private func op(icon: String, title: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.app(15, weight: .medium))
+            Text(title)
+                .font(.app(11, weight: .medium))
+        }
+        .foregroundColor(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(color)
     }
 }
 
@@ -423,10 +539,26 @@ struct CardEditView: View {
     /// nil = 新建
     let card: CardItem?
 
-    private enum PhotoSource: Int, Identifiable {
-        case library, camera
-        var id: Int { rawValue }
+private enum PhotoSource: Int, Identifiable {
+    case library, camera
+    var id: Int { rawValue }
+}
+
+// MARK: - 表单里的文字样式
+
+extension View {
+    /// 表单右侧的「值」：品牌色，和参考图一致
+    func value() -> some View {
+        font(.app(15))
+            .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
     }
+
+    /// 右侧的尖括号
+    func chevron() -> some View {
+        font(.app(13, weight: .semibold))
+            .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
+    }
+}
 
     @ObservedObject private var store = CardStore.shared
     @Environment(\.dismiss) private var dismiss
@@ -498,18 +630,14 @@ struct CardEditView: View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 row {
-                    Text("类型").font(.app(15))
+                    Text("类型")
                     Spacer()
                     Button {
                         showTypePicker = true
                     } label: {
                         HStack(spacing: 4) {
-                            Text(type.label)
-                                .font(.app(15))
-                                .foregroundColor(.primary.opacity(0.9))
-                            Image(systemName: "chevron.right")
-                                .font(.app(12, weight: .semibold))
-                                .foregroundColor(.secondary)
+                            Text(type.label).value
+                            Image(systemName: "chevron.right").chevron
                         }
                     }
                     .buttonStyle(.plain)
@@ -532,30 +660,25 @@ struct CardEditView: View {
                 }
                 sep
                 row {
-                    Text("图片").font(.app(15))
+                    Text("图片")
                     Spacer()
                     Button {
                         photoSource = .library
                     } label: {
                         HStack(spacing: 4) {
-                            Text(photos.isEmpty ? "上传" : "\(photos.count) 张")
-                                .font(.app(15))
-                                .foregroundColor(.primary.opacity(0.9))
-                            Image(systemName: "chevron.right")
-                                .font(.app(12, weight: .semibold))
-                                .foregroundColor(.secondary)
+                            Text(photos.isEmpty ? "上传" : "\(photos.count) 张").value
+                            Image(systemName: "chevron.right").chevron
                         }
                     }
                     .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, 14)
             .background(
-                RoundedRectangle(cornerRadius: 14)
+                RoundedRectangle(cornerRadius: 12)
                     .fill(Color(UIColor.secondarySystemGroupedBackground))
             )
-            .padding(.horizontal, 14)
-            .padding(.top, 14)
+            .padding(.horizontal, 16)
+            .padding(.top, 18)
 
             if !photos.isEmpty {
                 photoThumbs
@@ -621,41 +744,51 @@ struct CardEditView: View {
 
     private var saveButton: some View {
         VStack {
-            Divider()
+            Spacer(minLength: 0)
             Button(action: save) {
                 Text("保存")
                     .font(.app(17, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(brandColor))
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(Color(red: 0.0, green: 0.48, blue: 1.0))
+                    )
             }
             .buttonStyle(.plain)
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            .padding(.bottom, 18)
         }
     }
 
     // MARK: 行
 
     private var sep: some View {
-        Divider().padding(.leading, 14)
+        Divider().padding(.leading, 16)
     }
 
+    /// 一行表单。必须显式包 HStack：@ViewBuilder 传进来多个子元素时是 TupleView，
+    /// SwiftUI 会按竖排布局（之前「类型」和它的值被拆成上下两行就是这个原因）。
     private func row<C: View>(@ViewBuilder _ content: () -> C) -> some View {
-        content().padding(.vertical, 14)
+        HStack(spacing: 10) {
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 13)
     }
 
     private func field(_ title: String, text: Binding<String>, prompt: String,
                        keyboard: UIKeyboardType = .default) -> some View {
-        HStack {
+        HStack(spacing: 10) {
             Text(title)
                 .font(.app(15))
-                .frame(width: 116, alignment: .leading)
+            Spacer(minLength: 12)
             TextField(prompt, text: text)
                 .font(.app(15))
-                .keyboardType(keyboard)
                 .multilineTextAlignment(.trailing)
+                .keyboardType(keyboard)
         }
     }
 

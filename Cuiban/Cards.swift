@@ -64,6 +64,16 @@ struct CardItem: Identifiable, Codable, Equatable {
         if !number.isEmpty { return numberGrouped }
         return "未命名卡片"
     }
+
+    /// 「复制全部」的内容：一眼能贴给别人的完整信息
+    var copyAllText: String {
+        var lines: [String] = []
+        lines.append("\(type.label) · \(bank.isEmpty ? "未填银行" : bank)")
+        if !number.isEmpty { lines.append("卡号 " + numberGrouped) }
+        if !holder.isEmpty { lines.append("户主 " + holder) }
+        if !note.isEmpty { lines.append("备注 " + note) }
+        return lines.joined(separator: "\n")
+    }
 }
 
 // MARK: - 卡片仓库
