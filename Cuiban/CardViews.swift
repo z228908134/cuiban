@@ -242,8 +242,6 @@ struct CardListView: View {
                         .listRowBackground(Color.clear)
                 }
             }
-                }
-            }
             .listStyle(.plain)
             .scrollContentBackground(.hidden)
             .background(Color(UIColor.systemGroupedBackground))
