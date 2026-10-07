@@ -529,15 +529,17 @@ struct NoteBodyEditor: UIViewRepresentable {
             let line = cns.substring(with: lr)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // 行首的勾选标记上盖方框：用系统一定有字形的 ⬜️/☑️ 做底，
-            // 方框画在标记的第一个字符上（后面的变体选择符零宽，不动）
+            // 勾选框：直接用「☐ / ☑」字符本体（滴答清单同款细描边空心方框），
+            // 不再叠加绘制的附件图片——两层叠在一起会又脏又难看。
+            // 方框比正文略小一号、颜色略浅，和滴答的观感一致。
             let info = TextEditBridge.markInfo(in: line)
             if let info = info, info.markLen > 0 {
-                let att = NSTextAttachment()
-                att.image = info.checked ? CheckboxArt.checked : CheckboxArt.unchecked
-                att.bounds = CGRect(x: 0, y: -3, width: 17, height: 17)
-                attr.addAttribute(.attachment, value: att,
-                                  range: NSRange(location: lr.location + info.loc, length: 1))
+                attr.addAttributes([
+                    .font: UIFont.systemFont(ofSize: 15),
+                    .foregroundColor: info.checked
+                        ? UIColor.tertiaryLabel
+                        : UIColor.label.withAlphaComponent(0.82)
+                ], range: NSRange(location: lr.location + info.loc, length: info.markLen))
             }
 
             if let info = info, info.checked {
@@ -728,40 +730,6 @@ final class CheckboxTextView: UITextView {
     }
 }
 
-// MARK: - 勾选框图形
-
-/// 画出来的勾选框（滴答清单式圆角方框），替代 ⬜️ / ✅ 这类 emoji。
-/// 未勾选是细描边灰方框，勾选是蓝底白勾。
-enum CheckboxArt {
-    static let unchecked = image(checked: false)
-    static let checked = image(checked: true)
-
-    static func image(checked: Bool) -> UIImage {
-        let size = CGSize(width: 17, height: 17)
-        return UIGraphicsImageRenderer(size: size).image { _ in
-            let rect = CGRect(x: 1.6, y: 1.6, width: 13.8, height: 13.8)
-            let box = UIBezierPath(roundedRect: rect, cornerRadius: 3.6)
-            if checked {
-                UIColor.systemBlue.setFill()
-                box.fill()
-                let check = UIBezierPath()
-                check.move(to: CGPoint(x: 4.9, y: 8.9))
-                check.addLine(to: CGPoint(x: 7.3, y: 11.2))
-                check.addLine(to: CGPoint(x: 12.2, y: 5.9))
-                check.lineWidth = 1.9
-                check.lineCapStyle = .round
-                check.lineJoinStyle = .round
-                UIColor.white.setStroke()
-                check.stroke()
-            } else {
-                UIColor.systemGray.setStroke()
-                box.lineWidth = 1.4
-                box.stroke()
-            }
-        }
-    }
-}
-
 /// 工具栏 → 正文的操作桥
 final class TextEditBridge {
     weak var textView: UITextView?
@@ -774,10 +742,10 @@ final class TextEditBridge {
     var onSelectionChanged: ((Set<String>) -> Void)? = nil
 
     /// 标记字符本体（不含尾随空格）；存储与比较用。
-    /// 用带变体选择符的表情方块：系统字体一定有字形，绘制的方框盖在上面；
-    /// 就算方框没画出来，看到的也是 ⬜️/☑️ 而不是空白。
-    static let checkedMarkRaw = "\u{2611}\u{FE0F}"
-    static let uncheckedMarkRaw = "\u{2B1C}\u{FE0F}"
+    /// 用「☐ / ☑」细描边方框字符（滴答清单同款），不加变体选择符：
+    /// 加了会变成彩色 emoji 方块，和滴答的细线方框不一样。
+    static let checkedMarkRaw = "\u{2611}"
+    static let uncheckedMarkRaw = "\u{2610}"
 
     // MARK: 富文本样式
 
@@ -1151,11 +1119,12 @@ final class TextEditBridge {
                 return (loc: i, markLen: m, len: i + m + 1, checked: checked)
             }
         }
-        // 兼容旧写法（✅ / - [x] / ☐ 等）
+        // 兼容旧写法（⬜️/✅/- [ ]/☐ 等）：markLen 不含尾随空格，
+        // 这样点一下翻转时不会把方框后面的空格吃掉
         for checked in [true, false] {
             if let p = markerPrefix(in: rest, checked: checked) {
-                return (loc: i, markLen: (p as NSString).length,
-                        len: i + (p as NSString).length, checked: checked)
+                let n = (p as NSString).length
+                return (loc: i, markLen: max(n - 1, 1), len: i + n, checked: checked)
             }
         }
         return nil
