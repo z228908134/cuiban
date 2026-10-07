@@ -29,6 +29,15 @@ struct SettingsView: View {
     @State private var restorePayload: BackupPayload? = nil
     @State private var restoreSource = ""
 
+    // MARK: WebDAV 直连 NAS
+
+    @State private var davSheet = false
+    @State private var davURL = ""
+    @State private var davUser = ""
+    @State private var davPass = ""
+    @State private var davNotice: String? = nil
+    @State private var davTesting = false
+
     struct ExportItem: Identifiable {
         let id = UUID()
         let url: URL
@@ -194,110 +203,129 @@ struct SettingsView: View {
                     }
                 }
 
-                // MARK: 同步到 NAS / 文件夹
+// 备份与同步：本地备份 + NAS 同步合并成一个区块（卡片备份就是这么整合的）
 
-                Section(header: Text("同步到 NAS / 文件夹"),
-                        footer: Text("选一个你自己的文件夹（飞牛 WebDAV、SMB 挂载、iCloud 云盘、OneDrive 都可以），数据一变就自动写进去。Windows 版把数据目录指到同一个文件夹，两边就实时同步了。数据只在你自己的设备之间传，不经过任何服务器。")) {
-                    if cloudConfig.isOn {
-                        HStack {
-                            Label("同步已开启", systemImage: "checkmark.icloud.fill")
-                                .foregroundColor(.green)
-                            Spacer()
-                        }
+        Section(header: Text("备份与同步"),
+                footer: Text("本地备份自动存在手机里，最多留 10 份。同步到 NAS 可以直接连飞牛的 WebDAV（填地址就行，不用先在系统文件里连一遍），也可以选 iCloud 云盘这类系统文件夹。Windows 版把数据目录指到同一个位置，两边就实时同步了。数据只在你自己的设备之间传。")) {
+        // —— 本地备份 ——
 
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("同步位置")
-                                .font(.app(13))
-                                .foregroundColor(.secondary)
-                            Text(cloudConfig.folder)
-                                .font(.app(11))
-                                .foregroundColor(.secondary)
-                                .lineLimit(2)
-                                .truncationMode(.head)
-                        }
+          Toggle("自动备份（数据一变就存）", isOn: autoBackupBinding)
+          Toggle("备份里包含照片", isOn: backupPhotosBinding)
 
-                        if let at = cloudMeta.lastSyncAt {
-                            HStack {
-                                Text("上次同步")
-                                Spacer()
-                                Text(fmt(at, "M月d日 HH:mm"))
-                                    .font(.app(13))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
+       HStack {
+   Text("本地备份")
+   Spacer()
+            Text(backupSummaryText)
+           .foregroundColor(.secondary)
+         .font(.app(13))
+   }
 
-                        Toggle("数据一变就自动同步", isOn: cloudAutoBinding)
+        Button("立即备份一份") { doBackupNow() }
 
-                        Toggle("同步时包含照片", isOn: cloudPhotosBinding)
+    Button("备份到 iCloud 云盘 / 文件…") { prepareExport() }
 
-                        Button("立即同步") { doCloudSync() }
+        Button("从文件恢复…") { importOpen = true }
 
-                        Button("从同步文件夹拉取（用文件夹里的数据覆盖本机）") {
-                            confirmPullFromCloud()
-                        }
+      if !backupList.isEmpty {
+        Menu {
+        ForEach(backupList.prefix(10)) { b in
+        Button(b.title) { restoreFromLocal(b) }
+       }
+        } label: {
+ HStack {
+    Text("从本地备份恢复…")
+          Image(systemName: "chevron.up.chevron.down")
+     .font(.app(11))
+   .foregroundColor(.secondary)
+      }
+  }
+        }
 
-                        if let n = cloudNotice {
-                            Text(n)
-                                .font(.app(12))
-                                .foregroundColor(.secondary)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
+      if let n = backupNotice {
+         Text(n)
+            .font(.app(12))
+    .foregroundColor(.secondary)
+             .fixedSize(horizontal: false, vertical: true)
+   }
 
-                        Button("停止同步", role: .destructive) {
-                            cloudConfirmDisable = true
-                        }
-                    } else {
-                        Button {
-                            syncFolderPicker = true
-                        } label: {
-                            Label("选择同步文件夹", systemImage: "folder.badge.plus")
-                        }
-                    }
+             // —— NAS 同步 ——
+
+    if cloudConfig.isOn {
+         HStack {
+        Label(cloudConfig.mode == "webdav" ? "飞牛已连接" : "同步已开启",
+        systemImage: "checkmark.icloud.fill")
+        .foregroundColor(.green)
+        Spacer()
+      }
+
+        VStack(alignment: .leading, spacing: 3) {
+        Text("同步位置")
+           .font(.app(13))
+                .foregroundColor(.secondary)
+        Text(cloudConfig.displayTarget)
+  .font(.app(11))
+       .foregroundColor(.secondary)
+             .lineLimit(2)
+   .truncationMode(.head)
+    }
+
+            if let at = cloudMeta.lastSyncAt {
+        HStack {
+     Text("上次同步")
+       Spacer()
+    Text(fmt(at, "M月d日 HH:mm"))
+       .font(.app(13))
+              .foregroundColor(.secondary)
                 }
+            }
 
-                // MARK: 备份与恢复
+            Toggle("数据一变就自动同步", isOn: cloudAutoBinding)
 
-                Section(header: Text("备份与恢复"),
-                        footer: Text("自动备份保存在 App 本机，最多留 10 份。「备份到 iCloud」走系统文件面板：在弹出的面板里选「iCloud 云盘」下的目录，备份文件就会真的存进 iCloud，换手机也能从「文件」App 拿回来。")) {
-                    Toggle("自动备份（数据一变就存）", isOn: autoBackupBinding)
-                    Toggle("备份里包含照片", isOn: backupPhotosBinding)
+            Toggle("同步时包含照片", isOn: cloudPhotosBinding)
 
-                    HStack {
-                        Text("本地备份")
-                        Spacer()
-                        Text(backupSummaryText)
-                            .foregroundColor(.secondary)
-                            .font(.app(13))
-                    }
+     Button("立即同步") { doCloudSync() }
 
-                    Button("立即备份一份") { doBackupNow() }
+            Button("用 NAS 上的数据覆盖本机") { confirmPullFromCloud() }
 
-                    Button("备份到 iCloud 云盘 / 文件…") { prepareExport() }
+            if let n = cloudNotice {
+    Text(n)
+        .font(.app(12))
+ .foregroundColor(.secondary)
+        .fixedSize(horizontal: false, vertical: true)
+            }
 
-                    Button("从文件恢复…") { importOpen = true }
+            Button("停止同步", role: .destructive) {
+   cloudConfirmDisable = true
+  }
+        } else {
+        // 没开启时给两个并排入口：飞牛直连 / 系统文件夹
+      HStack(spacing: 12) {
+ Button {
+        davSheet = true
+  } label: {
+          VStack(spacing: 4) {
+        Image(systemName: "server.rack")
+        .font(.app(18))
+   Text("飞牛 WebDAV").font(.app(12))
+       }
+            .frame(maxWidth: .infinity)
+  }
+       .buttonStyle(.bordered)
 
-                    if !backupList.isEmpty {
-                        Menu {
-                            ForEach(backupList.prefix(10)) { b in
-                                Button(b.title) { restoreFromLocal(b) }
-                            }
-                        } label: {
-                            HStack {
-                                Text("从本地备份恢复…")
-                                Image(systemName: "chevron.up.chevron.down")
-                                    .font(.app(11))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                    }
-
-                    if let n = backupNotice {
-                        Text(n)
-                            .font(.app(12))
-                            .foregroundColor(.secondary)
-                            .fixedSize(horizontal: false, vertical: true)
-                    }
-                }
+        Button {
+      syncFolderPicker = true
+         } label: {
+      VStack(spacing: 4) {
+      Image(systemName: "folder")
+       .font(.app(18))
+      Text("系统文件夹").font(.app(12))
+            }
+      .frame(maxWidth: .infinity)
+   }
+            .buttonStyle(.bordered)
+    }
+        }
+    }
 
                 // MARK: 数据
 
@@ -350,17 +378,69 @@ struct SettingsView: View {
         .sheet(isPresented: $importOpen) {
             ImportFileSheet { url in handleImport(url) }
         }
-        .sheet(isPresented: $syncFolderPicker) {
-            FolderPickerSheet { url in
-                syncFolderPicker = false
+.sheet(isPresented: $syncFolderPicker) {
+  FolderPickerSheet { url in
+    syncFolderPicker = false
                 handleFolderPicked(url)
             }
         }
-        .alert("用文件夹里的数据覆盖本机？", isPresented: $cloudConfirmPull) {
+        .sheet(isPresented: $davSheet) {
+            NavigationView {
+                Form {
+                    Section {
+                        TextField("http://192.168.1.10:5005/cuiban-sync", text: $davURL)
+                            .font(.app(14))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                            .keyboardType(.URL)
+                        TextField("用户名", text: $davUser)
+                            .font(.app(14))
+                            .textInputAutocapitalization(.never)
+                            .autocorrectionDisabled()
+                        SecureField(CloudSync.webdavPassword.isEmpty ? "密码" : "密码（已保存，留空不改）",
+                                    text: $davPass)
+                            .font(.app(14))
+                    } header: {
+                        Text("飞牛 WebDAV")
+                    } footer: {
+                        Text("飞牛里「设置 → 文件服务 → WebDAV」打开后会给出地址和端口，默认 5005。地址填目录不用带文件名，App 会在下面放 cuiban-data.json。已做过 frp 映射的话把公网地址填进来即可。")
+                    }
+
+                    Section {
+                        Button(davTesting ? "测试中…" : "测试连接") { testWebDAV() }
+                            .disabled(davTesting || davURL.isEmpty)
+
+                        if let n = davNotice {
+                            Text(n)
+                                .font(.app(12))
+                                .foregroundColor(davNotice.hasPrefix("连接成功") ? .green : .orange)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .navigationTitle("飞牛直连")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        Button("取消") {
+                            davSheet = false
+                            davNotice = nil
+                            davPass = ""
+                        }
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button("保存并同步") { saveWebDAV() }
+                            .disabled(davURL.isEmpty)
+                    }
+                }
+            }
+            .navigationViewStyle(.stack)
+        }
+        .alert("用 NAS 上的数据覆盖本机？", isPresented: $cloudConfirmPull) {
             Button("覆盖", role: .destructive) { doPullFromCloud() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("本机现有的 \(store.tasks.count) 个任务会被文件夹里的数据替换。已经先在本地存了一份备份，出问题可以从「备份与恢复」里退回来。")
+            Text("本机现有的 \(store.tasks.count) 个任务会被 NAS 上的数据替换。已经先在本地存了一份备份，出问题可以从「本地备份恢复」里退回来。")
         }
         .alert("停止同步？", isPresented: $cloudConfirmDisable) {
             Button("停止", role: .destructive) {
@@ -370,7 +450,7 @@ struct SettingsView: View {
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("只是不再往文件夹写数据，本机数据不受影响。")
+            Text("只是不再往 NAS 写数据，本机数据不受影响。")
         }
         .onAppear {
             store.refreshAuth()
@@ -391,42 +471,57 @@ struct SettingsView: View {
     @State private var cloudConfirmDisable = false
     @State private var cloudConfirmPull = false
 
-    private var cloudAutoBinding: Binding<Bool> {
+private var cloudAutoBinding: Binding<Bool> {
         Binding(
             get: { cloudConfig.autoSync },
-            set: { v in
-                cloudConfig.autoSync = v
-                CloudSync.configure(folder: cloudConfig.folder,
-                                   includePhotos: cloudConfig.includePhotos,
-                                   autoSync: v)
-            })
+        set: { v in
+           cloudConfig.autoSync = v
+        if cloudConfig.mode == "webdav" {
+    CloudSync.configureWebDAV(url: cloudConfig.webdavURL,
+          user: cloudConfig.webdavUser,
+        password: CloudSync.webdavPassword,
+           includePhotos: cloudConfig.includePhotos,
+     autoSync: v)
+    } else {
+        CloudSync.configure(folder: cloudConfig.folder,
+            includePhotos: cloudConfig.includePhotos,
+      autoSync: v)
+       }
+  })
     }
 
     private var cloudPhotosBinding: Binding<Bool> {
-        Binding(
-            get: { cloudConfig.includePhotos },
+Binding(
+  get: { cloudConfig.includePhotos },
             set: { v in
-                cloudConfig.includePhotos = v
-                CloudSync.configure(folder: cloudConfig.folder,
-                                   includePhotos: v,
-                                   autoSync: cloudConfig.autoSync)
-                _ = CloudSync.syncNow()
-                cloudMeta = CloudSync.currentMeta
-            })
+      cloudConfig.includePhotos = v
+ if cloudConfig.mode == "webdav" {
+             CloudSync.configureWebDAV(url: cloudConfig.webdavURL,
+              user: cloudConfig.webdavUser,
+  password: CloudSync.webdavPassword,
+          includePhotos: v,
+         autoSync: cloudConfig.autoSync)
+          } else {
+CloudSync.configure(folder: cloudConfig.folder,
+           includePhotos: v,
+    autoSync: cloudConfig.autoSync)
+       }
+          _ = CloudSync.syncNow()
+      cloudMeta = CloudSync.currentMeta
+       })
     }
 
     private func doCloudSync() {
         let msg = CloudSync.syncAndReport()
         cloudMeta = CloudSync.currentMeta
-        cloudNotice = msg
+  cloudNotice = msg
     }
 
-    /// 用同步文件夹里的数据覆盖本机（先自动备份一份，避免误操作丢数据）
+    /// 用 NAS 上的数据覆盖本机（先自动备份一份，避免误操作丢数据）
     private func confirmPullFromCloud() {
-        guard !cloudConfig.folder.isEmpty else { return }
-        let dir = (cloudConfig.folder as NSString).appendingPathComponent(cloudConfig.remoteName)
-        guard FileManager.default.fileExists(atPath: dir) else {
-            cloudNotice = "同步文件夹里还没有数据，先在另一端上传一次"
+        guard cloudConfig.isOn else { return }
+        guard CloudSync.remoteFileExists() else {
+       cloudNotice = "NAS 上还没有数据，先在另一端上传一次"
             return
         }
         cloudConfirmPull = true
@@ -435,7 +530,8 @@ struct SettingsView: View {
     private func doPullFromCloud() {
         // 覆盖前先在本地存一份，出问题能退回来
         BackupStore.autoBackupIfNeeded(tasks: store.tasks, settings: store.settings)
-        cloudNotice = CloudSync.syncAndReport()
+        let r = CloudSync.pullOnly()
+        cloudNotice = r.text
         cloudMeta = CloudSync.currentMeta
     }
 
@@ -444,14 +540,53 @@ struct SettingsView: View {
         let path = url.path
         guard CloudSync.isFolderWritable(path) else {
             cloudNotice = "这个文件夹读不到（可能没连上 NAS，或没有写入权限）"
-            return
+     return
         }
         CloudSync.configure(folder: path,
-                            includePhotos: cloudConfig.includePhotos,
+          includePhotos: cloudConfig.includePhotos,
                             autoSync: cloudConfig.autoSync)
         cloudConfig = CloudSync.currentConfig
         // 立刻同步一次：远端有数据就拉下来，没有就把本机推上去
         cloudNotice = CloudSync.syncAndReport()
+ cloudMeta = CloudSync.currentMeta
+    }
+
+    // MARK: WebDAV（飞牛直连）
+
+    /// 测试连接：拿当前输入拼个临时客户端探一下
+    private func testWebDAV() {
+        davTesting = true
+ davNotice = nil
+        let url = davURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let pass = davPass.isEmpty ? CloudSync.webdavPassword : davPass
+        DispatchQueue.global(qos: .userInitiated).async {
+       let cli = WebDAVClient(baseURL: url, user: davUser, password: pass)
+  let msg = cli.test()
+       DispatchQueue.main.async {
+    davTesting = false
+       davNotice = msg
+        }
+        }
+    }
+
+    /// 保存并立刻同步一次
+    private func saveWebDAV() {
+        let url = davURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !url.isEmpty else {
+            davNotice = "先填 NAS 地址"
+       return
+        }
+        let pass = davPass.isEmpty ? CloudSync.webdavPassword : davPass
+ CloudSync.configureWebDAV(url: url,
+   user: davUser,
+     password: pass,
+    includePhotos: cloudConfig.includePhotos,
+    autoSync: true)
+        cloudConfig = CloudSync.currentConfig
+        davSheet = false
+        davNotice = nil
+    davPass = ""
+    cloudNotice = CloudSync.syncAndReport()
         cloudMeta = CloudSync.currentMeta
     }
 

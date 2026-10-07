@@ -27,8 +27,13 @@ enum CloudSync {
     private static var metaKey: String { "cloudsync.meta" }
 
     struct Config: Codable, Equatable {
-        /// 同步文件夹路径（空 = 未开启）
+/// 同步方式：folder = 系统文件里选的目录；webdav = 直连 NAS 的 WebDAV
+    var mode: String = "folder"
+        /// 同步文件夹路径（mode == folder 时有效，空 = 未开启）
         var folder: String = ""
+      /// WebDAV 地址，如 http://192.168.1.10:5005/cuiban-sync（mode == webdav 时有效）
+   var webdavURL: String = ""
+        var webdavUser: String = ""
         /// 目标文件名（飞牛上会生成一个带时间戳的目录，Windows 端指到这个目录）
         var remoteName: String = "cuiban-data.json"
         /// 是否包含照片
@@ -36,7 +41,17 @@ enum CloudSync {
         /// 自动同步
         var autoSync: Bool = true
 
-        var isOn: Bool { !folder.isEmpty }
+        var isOn: Bool {
+            if mode == "webdav" { return !webdavURL.isEmpty }
+    return !folder.isEmpty
+        }
+
+        /// 设置页显示的「同步位置」
+        var displayTarget: String {
+        mode == "webdav"
+       ? "\(webdavURL)/\(remoteName)"
+       : folder
+        }
     }
 
     /// 同步状态（本地记录：上次同步时间、远端文件的修改时间）
@@ -76,41 +91,116 @@ enum CloudSync {
     static var currentConfig: Config { config }
     static var currentMeta: Meta { meta }
 
-    static func configure(folder: String, includePhotos: Bool, autoSync: Bool) {
+static func configure(folder: String, includePhotos: Bool, autoSync: Bool) {
         var c = config
-        c.folder = folder
+        c.mode = "folder"
+    c.folder = folder
+        c.includePhotos = includePhotos
+ c.autoSync = autoSync
+        config = c
+    }
+
+    /// 配置 WebDAV 目标。密码不进 UserDefaults，单独放 Keychain。
+    static func configureWebDAV(url: String, user: String, password: String,
+    includePhotos: Bool, autoSync: Bool) {
+      var c = config
+        c.mode = "webdav"
+        c.webdavURL = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        c.webdavUser = user
         c.includePhotos = includePhotos
         c.autoSync = autoSync
         config = c
+     Keychain.set(password, for: webdavPasswordKey)
+    }
+
+    private static var webdavPasswordKey: String { "cloudsync.webdav.password" }
+
+    /// 当前 WebDAV 密码（存 Keychain，取不到当空串）
+    static var webdavPassword: String {
+        Keychain.get(webdavPasswordKey) ?? ""
+    }
+
+    static var webdavClient: WebDAVClient? {
+        let c = config
+        guard c.mode == "webdav", !c.webdavURL.isEmpty else { return nil }
+        return WebDAVClient(baseURL: c.webdavURL,
+                            user: c.webdavUser,
+        password: webdavPassword,
+        fileName: c.remoteName.isEmpty ? "cuiban-data.json" : c.remoteName)
     }
 
     static func disable() {
         var c = config
         c.folder = ""
+        c.webdavURL = ""
         config = c
+        Keychain.remove(webdavPasswordKey)
     }
 
     /// 同步文件夹是否存在可写
     static func isFolderWritable(_ path: String) -> Bool {
-        var isDir: ObjCBool = false
+    var isDir: ObjCBool = false
         guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir),
-              isDir.boolValue else { return false }
-        // 用「写一个临时文件再删掉」判断真实可写性（网络目录挂载掉时最准）
+          isDir.boolValue else { return false }
+  // 用「写一个临时文件再删掉」判断真实可写性（网络目录挂载掉时最准）
         let probe = (path as NSString).appendingPathComponent(".cuiban-write-test")
-        do {
+  do {
             try Data("ok".utf8).write(to: URL(fileURLWithPath: probe))
-            try? FileManager.default.removeItem(atPath: probe)
-            return true
+    try? FileManager.default.removeItem(atPath: probe)
+      return true
         } catch {
-            return false
+          return false
         }
     }
 
-    private static var remoteURL: URL? {
+    /// 远端文件是否已经存在（设置页「从同步文件夹拉取」用它判空）
+    static func remoteFileExists() -> Bool {
         let c = config
-        guard c.isOn else { return nil }
+        if c.mode == "webdav" {
+guard let cli = webdavClient else { return false }
+        return ((try? cli.download()) ?? nil) != nil
+    }
+        guard let u = localRemoteURL else { return false }
+        return FileManager.default.fileExists(atPath: u.path)
+    }
+
+    private static var localRemoteURL: URL? {
+   let c = config
+  guard c.mode != "webdav", !c.folder.isEmpty else { return nil }
         return URL(fileURLWithPath: (c.folder as NSString)
             .appendingPathComponent(c.remoteName.isEmpty ? "cuiban-data.json" : c.remoteName))
+    }
+
+  // MARK: 读写远端（本地文件夹和 WebDAV 统一走这里）
+
+    /// 读远端内容。返回 nil = 远端还没有数据
+    private static func readRemote() -> Data? {
+   let c = config
+        if c.mode == "webdav" {
+          guard let cli = webdavClient else { return nil }
+            return try? cli.download()
+        }
+        guard let u = localRemoteURL else { return nil }
+        return try? Data(contentsOf: u)
+    }
+
+    /// 写远端
+    private static func writeRemote(_ data: Data) throws {
+        let c = config
+        if c.mode == "webdav" {
+        guard let cli = webdavClient else { throw WebDAVClient.WebDAVError.badURL }
+    try cli.upload(data)
+    return
+        }
+        guard let u = localRemoteURL else { throw WebDAVClient.WebDAVError.badURL }
+        // 先写临时文件再替换，避免中途断网写坏文件
+        let tmp = u.appendingPathExtension("tmp")
+     try data.write(to: tmp, options: .atomic)
+        if FileManager.default.fileExists(atPath: u.path) {
+_ = try FileManager.default.replaceItemAt(u, withItemAt: tmp)
+        } else {
+    try FileManager.default.moveItem(at: tmp, to: u)
+        }
     }
 
     // MARK: 打包 / 解包
@@ -139,23 +229,17 @@ enum CloudSync {
         return p
     }
 
-    private static func writePayload(_ p: BackupPayload, to url: URL) throws {
+/// 把 payload 编成 JSON（WebDAV 和本地文件夹用的是同一份字节）
+    private static func encode(_ p: BackupPayload) throws -> Data {
         let enc = JSONEncoder()
         enc.outputFormatting = [.prettyPrinted, .sortedKeys]
         enc.dateEncodingStrategy = .iso8601
-        let data = try enc.encode(p)
-        // 先写临时文件再替换，避免中途断网写坏文件
-        let tmp = url.appendingPathExtension("tmp")
-        try data.write(to: tmp, options: .atomic)
-        if FileManager.default.fileExists(atPath: url.path) {
-            _ = try FileManager.default.replaceItemAt(url, withItemAt: tmp)
-        } else {
-            try FileManager.default.moveItem(at: tmp, to: url)
-        }
+        return try enc.encode(p)
     }
 
-    private static func readPayload(at url: URL) -> BackupPayload? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
+    /// 解析远端内容
+    private static func decode(_ data: Data?) -> BackupPayload? {
+        guard let data, !data.isEmpty else { return nil }
         let dec = JSONDecoder()
         dec.dateDecodingStrategy = .iso8601
         return try? dec.decode(BackupPayload.self, from: data)
@@ -219,21 +303,20 @@ enum CloudSync {
         }
     }
 
-    /// 手动同步：先尝试上传本地，再检查远端有没有更新
+/// 手动同步：先尝试上传本地，再检查远端有没有更新
     @discardableResult
     static func syncNow() -> SyncResult {
         let c = config
-        guard c.isOn, let remote = remoteURL else { return .off }
+        guard c.isOn else { return .off }
 
         // 远端还没有 → 直接推上去
-        guard FileManager.default.fileExists(atPath: remote.path) else {
-            return push(to: remote)
+        guard let remoteData = readRemote(), !remoteData.isEmpty else {
+            return push()
         }
 
         // 远端有：比较「远端 payload 的 exportedAt」和「本地上次同步时间」
-        let remotePayload = readPayload(at: remote)
-        guard let rp = remotePayload else {
-            return .failed("同步文件夹里的文件读不出来（可能被别的程序写坏了）")
+        guard let rp = decode(remoteData) else {
+            return .failed("远端的数据文件读不出来（可能被别的程序写坏了）")
         }
 
         var m = meta
@@ -248,7 +331,7 @@ enum CloudSync {
             return .upToDate
         case (true, false):
             // 只远端有改动 → 拉下来
-            let msg = BackupStore.restore(payload: rp)
+            _ = BackupStore.restore(payload: rp)
             stampLocalFiles()
             var m2 = meta
             m2.lastSyncAt = Date()
@@ -256,27 +339,46 @@ enum CloudSync {
             meta = m2
             return .pulled(rp.tasks.count)
         case (false, true):
-            return push(to: remote)
+            return push()
         case (true, true):
-            // 两边都改过：以远端为准推上去（本地那份会被下次同步带回来，
-            // 这里先保住远端已有的数据，避免丢东西）
-            return push(to: remote)
+        // 两边都改过：以远端为准推上去（本地那份会被下次同步带回来，
+   // 这里先保住远端已有的数据，避免丢东西）
+      return push()
         }
     }
 
-    private static func push(to remote: URL) -> SyncResult {
+    private static func push() -> SyncResult {
         let p = currentPayload()
         do {
-            try writePayload(p, to: remote)
-            stampLocalFiles()
+            try writeRemote(try encode(p))
+      stampLocalFiles()
             var m = meta
             m.lastSyncAt = Date()
             m.lastAction = "已上传"
             meta = m
-            return .pushed(p.tasks.count)
+      return .pushed(p.tasks.count)
         } catch {
             return .failed(error.localizedDescription)
         }
+    }
+
+    /// 只拉不推（设置页「用远端覆盖本机」用）
+    @discardableResult
+    static func pullOnly() -> SyncResult {
+        guard config.isOn else { return .off }
+        guard let data = readRemote(), !data.isEmpty else {
+            return .failed("远端还没有数据")
+        }
+        guard let rp = decode(data) else {
+            return .failed("远端的数据文件读不出来")
+        }
+        _ = BackupStore.restore(payload: rp)
+        stampLocalFiles()
+        var m = meta
+        m.lastSyncAt = Date()
+        m.lastAction = "已下载"
+        meta = m
+        return .pulled(rp.tasks.count)
     }
 
     /// 数据变化后自动同步（节流 30 秒，避免每次改动都写网络）
@@ -296,8 +398,8 @@ enum CloudSync {
     static func syncAndReport() -> String {
         let r = syncNow()
         // 拉下来之后本地也会变，再推一次把两端对齐
-        if case .pulled = r {
-            _ = push(to: remoteURL!)
+if case .pulled = r {
+            _ = push()
         }
         return r.text
     }
