@@ -32,8 +32,51 @@ struct BackupSyncSettingsView: View {
     @State private var cloudMeta = CloudSync.currentMeta
     @State private var cloudNotice: String? = nil
     @State private var syncFolderPicker = false
-    @State private var cloudConfirmDisable = false
-    @State private var cloudConfirmPull = false
+    /// 当前要弹的确认框。同一个视图只能挂一个 .alert，用它把三种确认合并
+    @State private var pendingAlert: AlertKind? = nil
+
+    enum AlertKind: String, Identifiable {
+        case pullFromCloud, disableSync, restoreBackup
+        var id: String { rawValue }
+    }
+
+    private var alertBinding: Binding<Bool> {
+        Binding(
+            get: { pendingAlert != nil },
+            set: { if !$0 { pendingAlert = nil } }
+        )
+    }
+
+    private var alertTitle: String {
+        switch pendingAlert {
+        case .pullFromCloud: return "用 NAS 上的数据覆盖本机？"
+        case .disableSync: return "停止同步？"
+        case .restoreBackup: return "确认恢复？"
+        case nil: return ""
+        }
+    }
+
+    private var alertConfirmTitle: String {
+        switch pendingAlert {
+        case .pullFromCloud: return "覆盖"
+        case .disableSync: return "停止"
+        case .restoreBackup: return "覆盖恢复"
+        case nil: return "确定"
+        }
+    }
+
+    private var alertMessage: String {
+        switch pendingAlert {
+        case .pullFromCloud:
+            return "本机现有的 \(store.tasks.count) 个任务会被 NAS 上的数据替换。已经先在本地存了一份备份，出问题可以从「本地备份恢复」里退回来。"
+        case .disableSync:
+            return "只是不再往 NAS 写数据，本机数据不受影响。"
+        case .restoreBackup:
+            return restoreConfirmText
+        case nil:
+            return ""
+        }
+    }
 
     var body: some View {
         Form {
@@ -57,32 +100,13 @@ struct BackupSyncSettingsView: View {
                 handleFolderPicked(url)
             }
         }
-.alert("用 NAS 上的数据覆盖本机？", isPresented: $cloudConfirmPull) {
-            Button("覆盖", role: .destructive) { doPullFromCloud() }
+// 三种确认弹窗合并成一个：同一视图挂多个 .alert 只有最后一个生效，
+        // 前两个会被静默忽略（旧代码就是这样，停止同步的确认框根本不弹）。
+        .alert(alertTitle, isPresented: alertBinding) {
+            Button(alertConfirmTitle, role: .destructive) { runAlertAction() }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("本机现有的 \(store.tasks.count) 个任务会被 NAS 上的数据替换。已经先在本地存了一份备份，出问题可以从「本地备份恢复」里退回来。")
-        }
-        .alert("停止同步？", isPresented: $cloudConfirmDisable) {
-            Button("停止", role: .destructive) {
-                CloudSync.disable()
-                cloudConfig = CloudSync.currentConfig
-                cloudNotice = "已停止同步，本机数据不受影响"
-            }
-            Button("取消", role: .cancel) {}
-        } message: {
-            Text("只是不再往 NAS 写数据，本机数据不受影响。")
-        }
-        .alert("确认恢复？", isPresented: Binding(
-            get: { restorePayload != nil },
-            set: { if !$0 { restorePayload = nil } }
-        )) {
-            Alert(
-                title: Text("确认恢复？"),
-                message: Text(restoreConfirmText),
-                primaryButton: .destructive(Text("覆盖恢复")) { performRestore() },
-                secondaryButton: .cancel(Text("取消"))
-            )
+            Text(alertMessage)
         }
         .onAppear {
             refreshBackupStats()
@@ -193,7 +217,7 @@ struct BackupSyncSettingsView: View {
                 }
 
                 Button("停止同步", role: .destructive) {
-                    cloudConfirmDisable = true
+                    pendingAlert = .disableSync
                 }
             } else {
                 NavigationLink {
@@ -330,6 +354,7 @@ struct BackupSyncSettingsView: View {
         }
         restorePayload = p
         restoreSource = entry.title
+        pendingAlert = .restoreBackup
     }
 
     private func performRestore() {
@@ -347,6 +372,7 @@ struct BackupSyncSettingsView: View {
         }
         restorePayload = p
         restoreSource = url.lastPathComponent
+        pendingAlert = .restoreBackup
     }
 
     private func doCloudSync() {
@@ -360,7 +386,7 @@ struct BackupSyncSettingsView: View {
             cloudNotice = "NAS 上还没有数据，先在另一端上传一次"
             return
         }
-        cloudConfirmPull = true
+pendingAlert = .pullFromCloud
     }
 
     private func doPullFromCloud() {
@@ -368,6 +394,23 @@ struct BackupSyncSettingsView: View {
         BackupStore.autoBackupIfNeeded(tasks: store.tasks, settings: store.settings)
         cloudNotice = CloudSync.pullOnly().text
         cloudMeta = CloudSync.currentMeta
+    }
+
+    /// 确认框点了「覆盖恢复 / 停止 / 覆盖」之后走这里
+    private func runAlertAction() {
+        switch pendingAlert {
+        case .restoreBackup:
+            performRestore()
+        case .disableSync:
+            CloudSync.disable()
+            cloudConfig = CloudSync.currentConfig
+            cloudNotice = "已停止同步，本机数据不受影响"
+        case .pullFromCloud:
+            doPullFromCloud()
+        case nil:
+            break
+        }
+        pendingAlert = nil
     }
 
     private func handleFolderPicked(_ url: URL) {
