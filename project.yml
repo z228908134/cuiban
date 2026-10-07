@@ -28,7 +28,7 @@ targets:
         CFBundleLocalizations:
           - zh-Hans
         CFBundleShortVersionString: "1.9.9"
-        CFBundleVersion: "46"
+        CFBundleVersion: "47"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
