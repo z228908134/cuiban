@@ -531,18 +531,16 @@ struct NoteBodyEditor: UIViewRepresentable {
             let line = cns.substring(with: lr)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // 勾选框：在行首标记上盖一个画出来的方框（滴答同款细描边空心方框）。
-            // 标记本身用 ☐/☑ 字符——万一附件没挂上，用户看到的也是一个方框字符，不会是空白；
-            // 字符只作兜底，视觉大小由附件决定（☐ 字形只有字号 40%，太小）。
+            // 勾选框：字符本体 + 大字号，尺寸完全由字号控制（和正文差不多大）
             let info = TextEditBridge.markInfo(in: line)
             if let info = info, info.markLen > 0 {
-                let att = NSTextAttachment()
-                att.image = info.checked ? CheckboxArt.checked : CheckboxArt.unchecked
-                att.bounds = CGRect(x: 0, y: -4 * FontScale.current,
-                                    width: CheckboxArt.size.width,
-                                    height: CheckboxArt.size.height)
-                attr.addAttribute(.attachment, value: att,
-                                  range: NSRange(location: lr.location + info.loc, length: info.markLen))
+                let boxSize: CGFloat = info.checked ? 24 : 22
+                attr.addAttributes([
+                    .font: UIFont.app(boxSize),
+                    .foregroundColor: info.checked
+                        ? UIColor.tertiaryLabel
+                        : UIColor.label.withAlphaComponent(0.78)
+                ], range: NSRange(location: lr.location + info.loc, length: info.markLen))
             }
 
             if let info = info, info.checked {
@@ -759,52 +757,6 @@ final class CheckboxTextView: UITextView {
     }
 }
 
-// MARK: - 勾选框图形
-
-/// 画出来的勾选框（滴答清单式细描边空心方框）。
-/// 为什么不用 ☐ 字符直接显示：那个字形只有字号的 ~40%，19pt 下来实际只有 8pt，
-/// 太小、也太难点。自己画能精确控制大小和粗细。
-/// 文字里存的仍然是 ☐/☑ 字符（万一附件没挂上，也能看到方框而不是空白）。
-enum CheckboxArt {
-    /// 32pt 画布、28pt 方框（按全局字号缩放），比正文大一大圈，好看也好点
-    static var size: CGSize {
-        let k = FontScale.current
-        return CGSize(width: 32 * k, height: 32 * k)
-    }
-    static var checked: UIImage { image(checked: true) }
-    static var unchecked: UIImage { image(checked: false) }
-
-    static func image(checked: Bool) -> UIImage {
-        let k = FontScale.current
-        let s = 32 * k
-        return UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { _ in
-            let rect = CGRect(x: 2.5 * k, y: 2.5 * k, width: 27 * k, height: 27 * k)
-            let box = UIBezierPath(roundedRect: rect, cornerRadius: 6.5 * k)
-            if checked {
-                // 勾过的：框线浅一点，勾子深一点，整行随之变灰
-                UIColor.label.withAlphaComponent(0.34).setStroke()
-                box.lineWidth = 1.8 * k
-                box.stroke()
-
-                let mark = UIBezierPath()
-                mark.move(to: CGPoint(x: 8.4 * k, y: 16.4 * k))
-                mark.addLine(to: CGPoint(x: 13.2 * k, y: 21.2 * k))
-                mark.addLine(to: CGPoint(x: 23.6 * k, y: 9.6 * k))
-                mark.lineWidth = 2.8 * k
-                mark.lineCapStyle = .round
-                mark.lineJoinStyle = .round
-                UIColor.label.withAlphaComponent(0.55).setStroke()
-                mark.stroke()
-            } else {
-                // 未勾选：清晰的深灰细描边空心方框
-                UIColor.label.withAlphaComponent(0.62).setStroke()
-                box.lineWidth = 2.2 * k
-                box.stroke()
-            }
-        }
-    }
-}
-
 /// 工具栏 → 正文的操作桥
 final class TextEditBridge {
     weak var textView: UITextView?
@@ -817,10 +769,12 @@ final class TextEditBridge {
     var onSelectionChanged: ((Set<String>) -> Void)? = nil
 
     /// 标记字符本体（不含尾随空格）；存储与比较用。
-    /// 用「☐ / ☑」细描边方框字符（滴答清单同款），不加变体选择符：
-    /// 加了会变成彩色 emoji 方块，和滴答的细线方框不一样。
+    /// 用「□ / ☑」字符本体 + 大字号渲染：字形宽度约占字号的 7 成，
+    /// 字号给到 22/24pt，出来的方框就有 15pt 上下，和正文一样大。
+    /// 不用 NSTextAttachment 画图——那条路踩过坑：附件算出来 0×0 时
+    /// 会把字符整个顶掉，界面就成了「空格」。
     static let checkedMarkRaw = "\u{2611}"
-    static let uncheckedMarkRaw = "\u{2610}"
+    static let uncheckedMarkRaw = "\u{25A1}"
 
     // MARK: 富文本样式
 
@@ -1175,8 +1129,8 @@ final class TextEditBridge {
 
     static func markerPrefix(in line: String, checked: Bool) -> String? {
         let candidates = checked
-            ? [checkedMark, "✅ ", "- [x] ", "- [X] ", "☑️ "]
-            : [uncheckedMark, "⬜️ ", "- [ ] ", "☐ "]
+            ? [checkedMark, "✅ ", "- [x] ", "- [X] ", "☑️ ", "☑ "]
+            : [uncheckedMark, "⬜️ ", "- [ ] ", "☐ ", "☐️ "]
         for c in candidates where line.hasPrefix(c) { return c }
         return nil
     }
@@ -1218,8 +1172,7 @@ final class TextEditBridge {
         let legacy: [(String, Bool)] = [
             ("\u{E001} ", true), ("\u{E000} ", false),          // 旧版私有区标记
             ("✅ ", true), ("- [x] ", true), ("- [X] ", true), ("☑️ ", true), ("☑ ", true),
-            ("⬜️ ", false), ("- [ ] ", false), ("☐ ", false), ("☐️ ", false)
-        ]
+            ("⬜️ ", false), ("- [ ] ", false), ("☐ ", false), ("☐️ ", false)        ]
         return s.components(separatedBy: "\n").map { line -> String in
             guard !line.isEmpty else { return line }
             for (old, checked) in legacy where line.hasPrefix(old) {

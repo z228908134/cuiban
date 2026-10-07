@@ -26,9 +26,12 @@ final class FontScale: ObservableObject {
 
     private static let defaultsKey = "cuiban.fontScale"
 
-    /// 当前系数。字体构造时直接读这个静态值（不需要 Environment）
+    /// 当前系数。字体构造时直接读这个静态值（不需要 Environment）。
+    /// 必须兜底 1.0：UserDefaults 里第一次没有这个键时 double() 返回 0，
+    /// 一旦漏出去，所有字号都会变成 0（界面全空、方框附件成 0×0 空图）。
     static var current: CGFloat {
-        CGFloat(UserDefaults.standard.double(forKey: defaultsKey))
+        let v = UserDefaults.standard.double(forKey: defaultsKey)
+        return CGFloat(v == 0 ? 1.0 : v)
     }
 
     @Published var value: Double {
@@ -45,7 +48,10 @@ final class FontScale: ObservableObject {
 
     private init() {
         let v = UserDefaults.standard.double(forKey: FontScale.defaultsKey)
-        value = v == 0 ? 1.0 : v
+        let start = v == 0 ? 1.0 : v
+        value = start
+        // init 里的赋值不会触发 didSet，这里手动落盘，保证下次启动读得到
+        UserDefaults.standard.set(start, forKey: FontScale.defaultsKey)
     }
 
     /// 当前落在哪一档（用于设置页高亮）

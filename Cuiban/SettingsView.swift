@@ -5,9 +5,9 @@ struct SettingsView: View {
     @ObservedObject private var ai = AIStore.shared
     @ObservedObject private var fontScale = FontScale.shared
 
-    /// 预览里的未勾选方框（和笔记编辑器一致）
-    private var uncheckedMarkForPreview: String {
-        TextEditBridge.uncheckedMarkRaw
+    /// 外观与字体页的摘要（主题 + 字号档位）
+    private var appearanceSummary: String {
+        "\(store.settings.theme.label) · \(fontScale.currentPresetLabel)"
     }
 
     /// 版本号从 Info.plist 动态读取，升级后自动跟随
@@ -39,91 +39,20 @@ struct SettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                // MARK: 外观
+                // MARK: 外观与字体
 
-                Section(header: Text("外观"),
-                        footer: Text("深色模式下所有页面都会跟着变暗；催促页固定红底白字，不受影响。")) {
-                    Picker("主题", selection: themeBinding) {
-                        ForEach(ThemeMode.allCases) { m in
-                            Text(m.label).tag(m)
+                Section {
+                    NavigationLink {
+                        AppearanceSettingsView()
+                    } label: {
+                        HStack {
+                            Label("外观与字体", systemImage: "textformat.size")
+                            Spacer()
+                            Text(appearanceSummary)
+                                .font(.app(13))
+                                .foregroundColor(.secondary)
                         }
                     }
-                    .pickerStyle(.segmented)
-                }
-
-                // MARK: 字体大小
-
-                Section(header: Text("字体大小"),
-                        footer: Text("整个 App 的字都会跟着一起变大变小，包括清单、日历、笔记和卡片。")) {
-                    // 四档预设
-                    HStack(spacing: 8) {
-                        ForEach(FontScale.presets, id: \.value) { p in
-                            let active = abs(fontScale.value - p.value) < 0.02
-                            Button {
-                                setFontScale(p.value)
-                            } label: {
-                                Text(p.label)
-                                    .font(.app(14, weight: active ? .semibold : .regular))
-                                    .foregroundColor(active ? .white : .primary)
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(active ? brandColor : Color.primary.opacity(0.07))
-                                    )
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-
-                    // 连续调节
-                    HStack(spacing: 10) {
-                        Text("A")
-                            .font(.app(12))
-                            .foregroundColor(.secondary)
-                        Slider(value: Binding(
-                            get: { fontScale.value },
-                            set: { setFontScale($0) }
-                        ),
-                               in: FontScale.range,
-                               step: 0.02)
-                            .tint(brandColor)
-                        Text("A")
-                            .font(.app(19, weight: .semibold))
-                    }
-
-                    HStack {
-                        Text("当前：\(fontScale.currentPresetLabel) · \(fontScale.percentText)")
-                            .font(.app(12))
-                            .foregroundColor(.secondary)
-                        Spacer()
-                    }
-
-                    // 实时预览
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("预览")
-                            .font(.app(11))
-                            .foregroundColor(.secondary)
-                        HStack(spacing: 9) {
-                            Image(systemName: "circle")
-                                .font(.app(20))
-                                .foregroundColor(brandColor)
-                            VStack(alignment: .leading, spacing: 3) {
-                                Text("明天下午 3 点开会")
-                                    .font(.app(16, weight: .semibold))
-                                Text("还有 4 小时 · 重复：工作日")
-                                    .font(.app(12))
-                                    .foregroundColor(.secondary)
-                            }
-                        }
-                        HStack(spacing: 9) {
-                            Text(uncheckedMarkForPreview)
-                                .font(.app(20))
-                            Text("库房盘点")
-                                .font(.app(15))
-                        }
-                    }
-                    .padding(.vertical, 6)
                 }
 
                 // MARK: 通知权限
@@ -372,14 +301,6 @@ struct SettingsView: View {
 
     // MARK: 备份相关
 
-    /// 改字号：更新全局系数 + 记进设置（备份/恢复才带得走）
-    private func setFontScale(_ v: Double) {
-        fontScale.value = v
-        var s = store.settings
-        s.fontScale = fontScale.value
-        store.updateSettingsPublic(s)
-    }
-
     private var backupSummaryText: String {
         if backupList.isEmpty { return "暂无" }
         return "\(backupList.count) 份 · 最近 " + fmt(backupList[0].date, "MM-dd HH:mm")
@@ -499,17 +420,6 @@ struct SettingsView: View {
 
     private func tip(_ s: String) -> some View {
         Text(s).font(.app(13)).foregroundColor(.secondary)
-    }
-
-    private var themeBinding: Binding<ThemeMode> {
-        Binding(
-            get: { store.settings.theme },
-            set: { v in
-                var s = store.settings
-                s.theme = v
-                store.updateSettingsPublic(s)
-            }
-        )
     }
 
     private var intervalBinding: Binding<Int> {
