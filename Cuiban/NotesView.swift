@@ -502,8 +502,8 @@ struct NoteBodyEditor: UIViewRepresentable {
         tv.font = Self.baseFont
         tv.textColor = .label
         tv.backgroundColor = .clear
-        // 新输入的行也走同一套行距：UITextView 的默认段落样式决定回车后的行高
-        tv.paragraphStyle = Self.paragraphStyle()
+        // 新输入的行也走同一套行距：段落样式通过 typingAttributes 下发，
+        // 回车新起一行时会继承它（restyle 里给整段文本也挂了同一份样式）
         tv.typingAttributes = Self.attrsFor([])
         tv.delegate = context.coordinator
         bridge.textView = tv
