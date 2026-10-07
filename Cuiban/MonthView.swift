@@ -273,41 +273,63 @@ struct MonthView: View {
     }
 
     // MARK: - 选中那天的列表
+    //
+    // 左滑用系统 List + swipeActions（和清单页、卡片页一致）。
+    // 自绘那套把按钮放在 ZStack 底层，触摸命中会被上层内容层吃掉，按钮点不动，已废弃。
 
     private var daySection: some View {
         let items = dayEntries
-        return ScrollView {
-            VStack(alignment: .leading, spacing: 0) {
-                if items.isEmpty {
+        return VStack(spacing: 0) {
+            if items.isEmpty {
+                ScrollView {
                     emptyState
                         .frame(maxWidth: .infinity)
                         .padding(.top, collapsed ? 8 : 22)
                         .padding(.bottom, 30)
-                } else {
-                    HStack {
-                        Text(fmt(selected, "M月d日 EEEE"))
-                            .font(.app(15, weight: .semibold))
-                        Spacer()
-                        Text("\(items.count) 个任务")
-                            .font(.app(12))
-                            .foregroundColor(.secondary)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .padding(.bottom, 6)
-
-                    ForEach(items) { e in
-                        SwipeableRow(
-                            onTap: { detail = e.task },
-                            onEdit: { editing = e.task },
-                            onDelete: { store.delete(id: e.task.id) }
-                        ) {
-                            entryRow(e)
-                        }
-                        Divider().padding(.leading, 16)
-                    }
-                    Color.clear.frame(height: 24)
                 }
+            } else {
+                HStack {
+                    Text(fmt(selected, "M月d日 EEEE"))
+                        .font(.app(15, weight: .semibold))
+                    Spacer()
+                    Text("\(items.count) 个任务")
+                        .font(.app(12))
+                        .foregroundColor(.secondary)
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .padding(.bottom, 6)
+
+                List {
+                    ForEach(items) { e in
+                        entryRow(e)
+                            .contentShape(Rectangle())
+                            .onTapGesture { detail = e.task }
+                            .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                Button {
+                                    editing = e.task
+                                } label: {
+                                    Label("编辑", systemImage: "square.and.pencil")
+                                }
+                                .tint(.blue)
+
+                                Button(role: .destructive) {
+                                    store.delete(id: e.task.id)
+                                } label: {
+                                    Label("删除", systemImage: "trash")
+                                }
+                            }
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                            .listRowSeparator(.hidden)
+                            .listRowBackground(Color.clear)
+                    }
+                    Color.clear
+                        .frame(height: 24)
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
     }
@@ -405,6 +427,13 @@ struct MonthView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .contentShape(Rectangle())
+        // 分隔线画在行内（左滑时跟着一起移走，不会像 List 自带分隔线那样错位）
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color.primary.opacity(0.08))
+                .frame(height: 0.5)
+                .padding(.leading, 44)
+        }
     }
 
     // MARK: - 数据
@@ -492,102 +521,5 @@ struct MonthView: View {
             let target = min(day, maxDay)
             selected = cal.date(byAdding: .day, value: target - 1, to: interval.start) ?? interval.start
         }
-    }
-}
-
-// MARK: - 左滑操作行（ScrollView 里没有系统 swipeActions，自绘实现）
-
-/// 左滑露出「编辑 / 删除」，再滑回或点击收起；交互对齐系统 List 的左滑
-private struct SwipeableRow<Content: View>: View {
-    var onTap: () -> Void
-    var onEdit: () -> Void
-    var onDelete: () -> Void
-    @ViewBuilder var content: () -> Content
-
-    @State private var revealed = false
-    @State private var isDragging = false
-    @State private var dragX: CGFloat = 0
-    private let revealWidth: CGFloat = 128
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            HStack(spacing: 0) {
-                Button {
-                    close()
-                    onEdit()
-                } label: {
-                    op(icon: "pencil", title: "编辑", color: Color(red: 0.2, green: 0.5, blue: 1.0))
-                        .frame(width: 64)
-                }
-                .buttonStyle(.plain)
-                Button {
-                    close()
-                    onDelete()
-                } label: {
-                    op(icon: "trash", title: "删除", color: .red)
-                        .frame(width: 64)
-                }
-                .buttonStyle(.plain)
-            }
-            content()
-                .background(Color(UIColor.systemBackground))
-                .offset(x: offset)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if revealed {
-                        close()
-                    } else {
-                        onTap()
-                    }
-                }
-                .gesture(swipe)
-        }
-        .clipped()
-    }
-
-    private var offset: CGFloat {
-        let base: CGFloat = revealed ? -revealWidth : 0
-        // 拖拽中用「基准 + 本次位移」，松手时 revealed 和 dragX 在同一个动画里归位。
-        // 写成 isDragging ? ... : base 会在松手瞬间先瞬移回基准位置再滑过去，会闪一下。
-        return min(0, max(-revealWidth - 40, base + dragX))
-    }
-
-    private func close() {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
-            revealed = false
-            dragX = 0
-        }
-    }
-
-    private var swipe: some Gesture {
-        DragGesture(minimumDistance: 20)
-            .onChanged { v in
-                // 垂直滑动交给 ScrollView，只有横向为主时才接管
-                guard abs(v.translation.width) > abs(v.translation.height) else { return }
-                isDragging = true
-                dragX = revealed ? v.translation.width + revealWidth : v.translation.width
-            }
-            .onEnded { v in
-                guard isDragging else { return }
-                isDragging = false
-                let target = (revealed ? -revealWidth : 0) + v.translation.width
-                let shouldOpen = target < -revealWidth / 2
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
-                    revealed = shouldOpen
-                    dragX = 0
-                }
-            }
-    }
-
-    private func op(icon: String, title: String, color: Color) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.app(15, weight: .medium))
-            Text(title)
-                .font(.app(11, weight: .medium))
-        }
-        .foregroundColor(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(color)
     }
 }
