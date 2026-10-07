@@ -44,7 +44,7 @@ struct MonthView: View {
             .overlay(alignment: .bottomTrailing) {
                 FabButton { showingAdd = true }
                     .padding(.trailing, 20)
-                    .padding(.bottom, 16)
+                    .padding(.bottom, 24)
             }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
@@ -394,34 +394,14 @@ struct MonthView: View {
                     .foregroundColor(e.task.isDone ? .secondary : .primary)
                     .strikethrough(e.task.isDone)
 
-                HStack(spacing: 6) {
-                    Text(fmt(e.date, "HH:mm"))
-                        .font(.app(11, weight: .semibold))
-                        .foregroundColor(e.projected
-                                         ? Color(red: 0.09, green: 0.37, blue: 0.65)
-                                         : (e.task.isOverdue && !e.task.isDone
-                                            ? Color(red: 0.64, green: 0.18, blue: 0.18)
-                                            : Color.secondary))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 5).fill(
-                                e.projected
-                                ? Color(red: 0.90, green: 0.95, blue: 0.99)
-                                : (e.task.isOverdue && !e.task.isDone
-                                   ? Color(red: 0.99, green: 0.92, blue: 0.92)
-                                   : Color.primary.opacity(0.06))
-                            )
-                        )
-                    if e.projected {
-                        Text("重复\(repeatLabel(e.task.repeatMode, weekdays: e.task.weekdays))")
-                    }
-                    if e.task.isOverdue && !e.task.isDone && !e.projected {
-                        Text("已逾期").foregroundColor(.red)
-                    }
+                // 时间标签与清单页 / 详情页共用 DueBadge，重复推算走 timeOverride
+                if e.projected {
+                    DueBadge(task: e.task, now: Date(), size: 11,
+                             timeOverride: e.date,
+                             extraOverride: "重复\(repeatLabel(e.task.repeatMode, weekdays: e.task.weekdays))")
+                } else {
+                    DueBadge(task: e.task, now: Date(), size: 11)
                 }
-                .font(.app(11))
-                .foregroundColor(.secondary)
             }
 
             Spacer(minLength: 4)

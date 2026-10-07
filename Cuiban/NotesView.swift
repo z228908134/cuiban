@@ -49,8 +49,7 @@ struct NotesView: View {
                         }
                     }
                     .listStyle(.insetGrouped)
-                }
-            }
+                }            }
             .navigationTitle("笔记")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottomTrailing) {
@@ -85,34 +84,98 @@ struct NotesView: View {
     }
 
     private func row(_ n: NoteItem) -> some View {
-        Button {
-            editing = n
-        } label: {
-            VStack(alignment: .leading, spacing: 4) {
+        // 用 contentShape + onTapGesture 而不是 Button 包裹：
+        // Button 会吃掉左滑手势，导致 swipeActions 划不出来
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
                 Text(n.displayTitle)
                     .font(.app(16, weight: .semibold))
                     .foregroundColor(.primary)
                     .lineLimit(1)
+                if !n.photos.isEmpty {
+                    Image(systemName: "photo.on.rectangle")
+                        .font(.app(10))
+                        .foregroundColor(.secondary.opacity(0.8))
+                }
+                Spacer(minLength: 0)
+            }
 
+            if !n.snippet.isEmpty {
                 Text(n.snippet)
                     .font(.app(13))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
-
-                HStack(spacing: 8) {
-                    Text(fmt(n.updatedAt, "M月d日 HH:mm"))
-                        .font(.app(11))
-                        .foregroundColor(.secondary.opacity(0.8))
-                    if !n.photos.isEmpty {
-                        Image(systemName: "photo.on.rectangle")
-                            .font(.app(10))
-                            .foregroundColor(.secondary.opacity(0.8))
-                    }
-                    Spacer()
-                }
             }
-            .padding(.vertical, 2)
+
+            // 更新时间的胶囊标签：今天橙、7 天内蓝、更早灰
+            // （和清单页的时间高亮是同一套「彩色小标签」语言）
+            Text(fmt(n.updatedAt, "M月d日 HH:mm"))
+                .font(.app(11, weight: .semibold))
+                .foregroundColor(timeTagFg(n.updatedAt))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(
+                    RoundedRectangle(cornerRadius: 5).fill(timeTagBg(n.updatedAt))
+                )
         }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture { editing = n }
+        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            // 与清单页 / 卡片页一致：编辑在前、删除在后，
+            // 声明要反着写（显示顺序 = 声明顺序的倒序）
+            Button {
+                let ids = [n.id]
+                noteStore.delete(ids: ids)
+            } label: {
+                noteSwipeIcon("trash")
+            }
+            .buttonStyle(.plain)
+            .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
+
+            Button {
+                editing = n
+            } label: {
+                noteSwipeIcon("square.and.pencil")
+            }
+            .buttonStyle(.plain)
+            .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
+        }
+    }
+
+    /// 左滑按钮里的白色图标 + 圆形半透明底（与清单页同一规格）
+    private func noteSwipeIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.app(18, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(.white.opacity(0.25)))
+    }
+
+    /// 更新时间的标签配色：今天橙、7 天内蓝、更早灰
+    private func timeTagBg(_ d: Date) -> Color {
+        let days = Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: Date()),
+            to: Calendar.current.startOfDay(for: d)
+        ).day ?? 0
+        if days <= 0 {
+            return Color(red: 0.98, green: 0.91, blue: 0.84)
+        }
+        if days <= 7 { return Color(red: 0.90, green: 0.95, blue: 0.99) }
+        return Color.primary.opacity(0.06)
+    }
+
+    private func timeTagFg(_ d: Date) -> Color {
+        let days = Calendar.current.dateComponents(
+            [.day],
+            from: Calendar.current.startOfDay(for: Date()),
+            to: Calendar.current.startOfDay(for: d)
+        ).day ?? 0
+        if days <= 0 { return Color(red: 0.52, green: 0.31, blue: 0.04) }
+        if days <= 7 { return Color(red: 0.09, green: 0.37, blue: 0.65) }
+        return .secondary
     }
 }
 
@@ -176,6 +239,7 @@ struct NoteEditorView: View {
                 // 格式工具栏（参考滴答清单）
                 formatBar
             }
+            .navigationTitle(note == nil ? "新建笔记" : "编辑笔记")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -185,8 +249,9 @@ struct NoteEditorView: View {
                     Button {
                         showTemplates = true
                     } label: {
-                        Text("使用模板")
-                            .font(.app(14))
+                        // 用图标按钮而不是文字，标题栏才不会被「使用模板」四个字挤偏
+                        Image(systemName: "text.badge.plus")
+                            .font(.app(17))
                     }
                 }
             }

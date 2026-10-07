@@ -41,15 +41,13 @@ struct CardListView: View {
         }
         .navigationTitle("卡片备份")
         .navigationBarTitleDisplayMode(.inline)
+        // 添加入口和清单 / 日历 / 笔记页统一：右下角圆形「+」
+        .overlay(alignment: .bottomTrailing) {
+            FabButton { showingAdd = true }
+                .padding(.trailing, 20)
+                .padding(.bottom, 24)
+        }
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
-                Button {
-                    showingAdd = true
-                } label: {
-                    Image(systemName: "plus.circle")
-                        .font(.app(20, weight: .regular))
-                }
-            }
             ToolbarItem(placement: .navigationBarTrailing) {
                 Menu {
                     Button {

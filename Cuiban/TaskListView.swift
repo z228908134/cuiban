@@ -87,7 +87,9 @@ struct TaskListView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
     }
 
     @ViewBuilder
@@ -173,69 +175,12 @@ struct TaskListView: View {
             .background(Circle().fill(.white.opacity(0.25)))
     }
 
-    /// 时间高亮标签：逾期红、当天橙、以后蓝、已完成灰。
-    /// 标签只包住时间本身，「还有 20 小时」这类说明留在标签外，避免一整行都是底色。
+    /// 时间高亮标签：清单列表 / 详情页 / 日历共用 DueBadge，这里只包一层保持调用点简洁
     private func dueBadge(_ t: TaskItem) -> some View {
-        let parts = dueParts(t)
-        return HStack(spacing: 5) {
-            Text(parts.time)
-                .font(.app(11, weight: .semibold))
-                .foregroundColor(parts.fg)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(
-                    RoundedRectangle(cornerRadius: 5).fill(parts.bg)
-                )
-            if !parts.extra.isEmpty {
-                Text(parts.extra)
-                    .font(.app(11))
-                    .foregroundColor(t.isDone ? Color.secondary.opacity(0.7) : .secondary)
-            }
-        }
+        DueBadge(task: t, now: now, size: 11)
     }
 
-    /// 时间文案拆成「标签本体 + 补充说明」两部分，按紧急程度分色
-    private func dueParts(_ t: TaskItem) -> (time: String, extra: String, fg: Color, bg: Color) {
-        if t.isDone {
-            let s = t.doneAt.map { "已完成 · " + timeLabel($0) } ?? "已完成"
-            return (s, "", Color.secondary, Color.primary.opacity(0.06))
-        }
-        let due = t.effectiveDue
-        let diff = due.timeIntervalSince(now)
-        // 逾期：红底
-        if diff <= 0 {
-            return ("已逾期 " + human(-diff), timeLabel(due),
-                    Color(red: 0.64, green: 0.18, blue: 0.18),
-                    Color(red: 0.99, green: 0.92, blue: 0.92))
-        }
-        // 今天 / 明天：橙底
-        let cal = Calendar.current
-        let days = cal.dateComponents([.day],
-                                      from: cal.startOfDay(for: now),
-                                      to: cal.startOfDay(for: due)).day ?? 0
-        if days <= 1 {
-            return ("今天 " + timeLabel(due), "还有 " + human(diff),
-                    Color(red: 0.52, green: 0.31, blue: 0.04),
-                    Color(red: 0.98, green: 0.91, blue: 0.84))
-        }
-        // 更远的：蓝底
-        return (timeLabel(due), "还有 " + human(diff),
-                Color(red: 0.09, green: 0.37, blue: 0.65),
-                Color(red: 0.90, green: 0.95, blue: 0.99))
-    }
-
-    private func dueLine(_ t: TaskItem) -> String {
-        if t.isDone {
-            if let d = t.doneAt { return "已完成 · " + timeLabel(d) }
-            return "已完成"
-        }
-        let due = t.effectiveDue
-        let diff = due.timeIntervalSince(now)
-        if diff <= 0 {
-            return timeLabel(due) + " · 已逾期 " + human(-diff)
-        }
-        return timeLabel(due) + " · 还有 " + human(diff)
-    }
+    // 时间文案统一走 DueBadge，不再保留纯文字版本
 }
 
 // MARK: - 任务详情页
@@ -316,11 +261,8 @@ struct TaskDetailView: View {
                     .font(.app(20, weight: .semibold))
                     .strikethrough(current.isDone)
                     .foregroundColor(current.isDone ? .secondary : .primary)
-                Text(dueLine(current))
-                    .font(.app(13))
-                    .foregroundColor(current.isDone
-                                     ? .secondary
-                                     : (current.isOverdue ? .red : .secondary))
+                // 和清单列表用同一套高亮标签，详情页不再退回纯文字
+                DueBadge(task: current, now: Date(), size: 13)
             }
             Spacer(minLength: 0)
         }
