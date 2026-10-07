@@ -355,7 +355,8 @@ struct TaskDetailView: View {
     /// 备注里的勾选行：画出来的方框 + 勾了整句删除线置灰，和笔记编辑器一致
     @ViewBuilder
     private func noteLineView(_ line: String) -> some View {
-        let checked = TextEditBridge.markerPrefix(in: line, checked: true) != nil
+        let info = TextEditBridge.markInfo(in: line)
+        let checked = info?.checked ?? false
         if let body = TextEditBridge.stripMark(in: line) {
             HStack(alignment: .top, spacing: 7) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")

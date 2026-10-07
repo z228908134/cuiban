@@ -129,6 +129,8 @@ struct NoteEditorView: View {
     @State private var bodyText: String
     @State private var photos: [String]
     @State private var styleData: String
+    /// 保存落地后的笔记 id（新建时第一次保存就记住，避免关闭时再存出一条重复）
+    @State private var savedID: String?
     /// 当前选区生效的样式（工具栏按钮高亮用）
     @State private var activeTraits: Set<String> = []
     @State private var photoSource: PhotoSource? = nil
@@ -146,6 +148,7 @@ struct NoteEditorView: View {
         _bodyText = State(initialValue: TextEditBridge.migrate(note?.body ?? ""))
         _photos = State(initialValue: note?.photos ?? [])
         _styleData = State(initialValue: note?.styleData ?? "[]")
+        _savedID = State(initialValue: note?.id)
         let br = TextEditBridge()
         br.styles = NoteStyle.decode(note?.styleData)
         _bridge = State(initialValue: br)
@@ -366,6 +369,12 @@ struct NoteEditorView: View {
         guard hasContent else { return }
 
         var n = note ?? NoteItem()
+        // 关闭按钮和 onDisappear 都会走到这里：新建时复用第一次保存的 id，
+        // 否则 NoteItem() 每次都是新 UUID，会存出两条一模一样的笔记
+        if let sid = savedID {
+            n.id = sid
+            n.createdAt = noteStore.note(id: sid)?.createdAt ?? n.createdAt
+        }
         n.title = title.trimmingCharacters(in: .whitespacesAndNewlines)
         n.body = bodyText
         n.photos = photos
@@ -381,6 +390,7 @@ struct NoteEditorView: View {
 
         n.updatedAt = Date()
         noteStore.upsert(n)
+        savedID = n.id
     }
 
     private func hideKeyboard() {
@@ -544,34 +554,32 @@ struct NoteBodyEditor: UIViewRepresentable {
             let line = cns.substring(with: lr)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // 行首的标记字符挂上对应方框图片（display 里它已是 U+FFFC）
-            if line.hasPrefix(TextEditBridge.checkedMarkRaw)
-                || line.hasPrefix(TextEditBridge.uncheckedMarkRaw) {
+            // 行首的标记字符挂上对应方框图片（display 里它已是 U+FFFC）。
+            // 用 markInfo：允许行首缩进，缩进后的勾选框也能正确显示
+            let info = TextEditBridge.markInfo(in: line)
+            if let info = info {
                 let att = NSTextAttachment()
-                att.image = line.hasPrefix(TextEditBridge.checkedMarkRaw)
-                    ? CheckboxArt.checked : CheckboxArt.unchecked
+                att.image = info.checked ? CheckboxArt.checked : CheckboxArt.unchecked
                 att.bounds = CGRect(x: 0, y: -3, width: 17, height: 17)
                 attr.addAttribute(.attachment, value: att,
-                                  range: NSRange(location: lr.location, length: 1))
+                                  range: NSRange(location: lr.location + info.loc, length: 1))
             }
 
-            if TextEditBridge.markerPrefix(in: trimmed, checked: true) != nil {
+            if let info = info, info.checked {
                 // 已勾选：只给勾选框后面的那段文字加删除线并置灰
-                if let p = TextEditBridge.markerPrefix(in: line, checked: true) {
-                    var bodyLen = lr.length - (p as NSString).length
-                    // 行尾换行不计入
-                    if bodyLen > 0, cns.character(at: lr.location + (p as NSString).length + bodyLen - 1) == 0x0A {
-                        bodyLen -= 1
-                    }
-                    if bodyLen > 0 {
-                        attr.addAttributes([
-                            .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                            .strikethroughColor: UIColor.secondaryLabel,
-                            .foregroundColor: UIColor.secondaryLabel
-                        ], range: NSRange(location: lr.location + (p as NSString).length, length: bodyLen))
-                    }
+                var bodyLen = lr.length - info.len
+                // 行尾换行不计入
+                if bodyLen > 0, cns.character(at: lr.location + info.len + bodyLen - 1) == 0x0A {
+                    bodyLen -= 1
                 }
-            } else if trimmed.hasPrefix("# ") {
+                if bodyLen > 0 {
+                    attr.addAttributes([
+                        .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                        .strikethroughColor: UIColor.secondaryLabel,
+                        .foregroundColor: UIColor.secondaryLabel
+                    ], range: NSRange(location: lr.location + info.len, length: bodyLen))
+                }
+            } else if info == nil, trimmed.hasPrefix("# ") {
                 attr.addAttribute(
                     .font,
                     value: UIFont.systemFont(ofSize: 19, weight: .semibold),
@@ -648,32 +656,35 @@ struct NoteBodyEditor: UIViewRepresentable {
 
         // MARK: 点勾选框打勾（触摸入口拦截，见 CheckboxTextView）
 
-        /// 命中判定：点落在某个勾选行「行首方框」的热区里 → 返回那一行的范围。
+        /// 命中判定：点落在某个勾选行「方框」的热区里 → 返回该行范围 + 标记字符位置 + 当前勾选态。
         /// 用 caretRect 拿方框位置：它由系统按 inset / 滚动偏移算好，永远和光标所见一致，
         /// 不再自己换算 textContainer 坐标（之前那套换算就是一直不准的根源）。
-        private static func checkboxLine(at point: CGPoint, in tv: UITextView) -> NSRange? {
-            let ns = (tv.text ?? "") as NSString
+        private static func checkboxHit(at point: CGPoint, in tv: UITextView)
+            -> (range: NSRange, markLoc: Int, checked: Bool)? {
+            let raw = tv.text ?? ""
+            let plain = NoteBodyEditor.plainText(tv.attributedText)
+            // 等长校验：附件占位符与标记字符 1:1，长度不一致说明有异常内容，放弃接管
+            guard plain.utf16.count == raw.utf16.count else { return nil }
+            let ns = plain as NSString
             var loc = 0
             while loc < ns.length {
                 let lr = ns.lineRange(for: NSRange(location: loc, length: 0))
-                if lr.length > 0 {
-                    let line = ns.substring(with: lr)
-                    let isCheckLine = line.hasPrefix(String(NoteBodyEditor.attachChar))
-                        || line.hasPrefix(TextEditBridge.checkedMarkRaw)
-                        || line.hasPrefix(TextEditBridge.uncheckedMarkRaw)
-                    if isCheckLine,
-                       let pos = tv.position(from: tv.beginningOfDocument, offset: lr.location) {
+                if lr.length > 0, let info = TextEditBridge.markInfo(in: ns.substring(with: lr)) {
+                    let markLoc = lr.location + info.loc
+                    if let pos = tv.position(from: tv.beginningOfDocument, offset: markLoc) {
                         let cr = tv.caretRect(for: pos)
                         // 方框 17pt，手指点不准，热区左右各放宽，纵向整行高
                         let hot = CGRect(x: cr.minX - 9,
                                          y: cr.minY - 6,
                                          width: 36,
                                          height: cr.height + 12)
-                        if hot.contains(point) { return lr }
-                        // 兜底：让系统告诉我们这个点最近的字符位置（同样是系统算坐标，最稳）
-                        if let near = tv.closestPosition(to: point) {
-                            let idx = tv.offset(from: tv.beginningOfDocument, to: near)
-                            if idx == lr.location || idx == lr.location + 1 { return lr }
+                        if hot.contains(point) { return (range: lr, markLoc: markLoc, checked: info.checked) }
+                    }
+                    // 兜底：让系统告诉我们这个点最近的字符位置（同样是系统算坐标，最稳）
+                    if let near = tv.closestPosition(to: point) {
+                        let idx = tv.offset(from: tv.beginningOfDocument, to: near)
+                        if idx == markLoc || idx == markLoc + 1 {
+                            return (range: lr, markLoc: markLoc, checked: info.checked)
                         }
                     }
                 }
@@ -685,7 +696,7 @@ struct NoteBodyEditor: UIViewRepresentable {
 
         /// 点在勾选框上：切换勾选状态。返回 true 表示已接管（hitTest 会吞掉这次触摸）
         func toggleCheckbox(at point: CGPoint, in tv: UITextView) -> Bool {
-            guard let lr = Self.checkboxLine(at: point, in: tv) else { return false }
+            guard let hit = Self.checkboxHit(at: point, in: tv) else { return false }
             // 中文输入法还有拼音组合串时先提交，否则样式重排会被跳过，
             // 方框标记字符会裸显示成「看不清的字 + 空格」
             if tv.markedTextRange != nil {
@@ -693,26 +704,18 @@ struct NoteBodyEditor: UIViewRepresentable {
             }
             let plain = NoteBodyEditor.plainText(tv.attributedText)
             let plainNS = plain as NSString
-            // 等长校验：附件占位符与标记字符 1:1，长度不一致说明有异常内容，放弃接管
-            guard (tv.text ?? "").utf16.count == plainNS.length,
-                  lr.location + lr.length <= plainNS.length else { return false }
-            let line = plainNS.substring(with: lr)
-            var newLine: String? = nil
-            if let u = TextEditBridge.markerPrefix(in: line, checked: false) {
-                newLine = TextEditBridge.checkedMark + String(line.dropFirst(u.count))
-            } else if let c = TextEditBridge.markerPrefix(in: line, checked: true) {
-                newLine = TextEditBridge.uncheckedMark + String(line.dropFirst(c.count))
-            }
-            guard let nl = newLine else { return false }
+            guard hit.range.location + hit.range.length <= plainNS.length,
+                  hit.markLoc >= 0, hit.markLoc < plainNS.length else { return false }
 
-            let newAll = plainNS.replacingCharacters(in: lr, with: nl)
+            // 只替换行首那一个标记字符：缩进、后面的空格与正文都原样保留
+            let newAll = plainNS.replacingCharacters(
+                in: NSRange(location: hit.markLoc, length: 1),
+                with: hit.checked ? TextEditBridge.uncheckedMarkRaw : TextEditBridge.checkedMarkRaw
+            )
             parent.bridge.adjustStyles(old: plain, new: newAll)
             tv.text = newAll
-            let newNS = newAll as NSString
-            tv.selectedRange = NSRange(
-                location: min(lr.location + max((nl as NSString).length - 1, 0), newNS.length),
-                length: 0
-            )
+            tv.selectedRange = NSRange(location: min(hit.markLoc + 1, (newAll as NSString).length),
+                                       length: 0)
             NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
                                    pending: parent.bridge.pendingTraits)
             parent.bridge.syncSelectionUI(tv)
@@ -1068,11 +1071,12 @@ final class TextEditBridge {
         let ns = old as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
-        let nonEmpty = comps.filter { !$0.isEmpty }
-        let has = !nonEmpty.isEmpty && nonEmpty.allSatisfy { $0.hasPrefix(prefix) }
-        let out = comps.map { line -> String in
-            if line.isEmpty { return line }
-            return has ? String(line.dropFirst(prefix.count)) : prefix + line
+        let pairs = linesWithoutCheckbox(comps)
+        let nonEmpty = pairs.filter { !$0.body.trimmingCharacters(in: .whitespaces).isEmpty }
+        let has = !nonEmpty.isEmpty && nonEmpty.allSatisfy { $0.body.hasPrefix(prefix) }
+        let out = pairs.map { p -> String in
+            if p.body.isEmpty { return p.pad }
+            return has ? p.pad + String(p.body.dropFirst(prefix.count)) : p.pad + prefix + p.body
         }
         let joined = out.joined(separator: "\n")
         let newAll = ns.replacingCharacters(in: lr, with: joined)
@@ -1090,15 +1094,16 @@ final class TextEditBridge {
         let ns = old as NSString
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
-        let nonEmpty = comps.filter { !$0.isEmpty }
-        let allNumbered = !nonEmpty.isEmpty && nonEmpty.allSatisfy(isNumberedLine)
+        let pairs = linesWithoutCheckbox(comps)
+        let nonEmpty = pairs.filter { !$0.body.trimmingCharacters(in: .whitespaces).isEmpty }
+        let allNumbered = !nonEmpty.isEmpty && nonEmpty.allSatisfy { isNumberedLine($0.body) }
 
         var counter = 1
-        let out = comps.map { line -> String in
-            if line.isEmpty { return line }
-            let stripped = stripNumber(line)
-            if allNumbered { return stripped }
-            let s = "\(counter). " + stripped
+        let out = pairs.map { p -> String in
+            if p.body.isEmpty { return p.pad }
+            let stripped = stripNumber(p.body)
+            if allNumbered { return p.pad + stripped }
+            let s = p.pad + "\(counter). " + stripped
             counter += 1
             return s
         }
@@ -1120,20 +1125,23 @@ final class TextEditBridge {
         let lr = lineRange(tv, ns: ns)
         let comps = ns.substring(with: lr).components(separatedBy: "\n")
         let out = comps.map { line -> String in
-            if line.isEmpty { return line }
-            if let p = Self.markerPrefix(in: line, checked: true) {
-                return Self.uncheckedMark + String(line.dropFirst(p.count))
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { return line }
+            // 已有勾选框：原地翻转那一个标记字符（缩进、空格、正文都不动）
+            if let info = Self.markInfo(in: line) {
+                return (line as NSString).replacingCharacters(
+                    in: NSRange(location: info.loc, length: 1),
+                    with: info.checked ? Self.uncheckedMarkRaw : Self.checkedMarkRaw
+                )
             }
-            if let p = Self.markerPrefix(in: line, checked: false) {
-                return Self.checkedMark + String(line.dropFirst(p.count))
-            }
-            // 去掉其它列表前缀再挂勾选框，避免叠加
+            // 去掉其它列表前缀再挂勾选框，避免叠加（缩进保留）
+            var pad = ""
             var s = line
+            while s.hasPrefix(" ") { pad += " "; s = String(s.dropFirst()) }
             for p in ["- ", "> ", "1. ", "2. ", "3. "] where s.hasPrefix(p) {
                 s = String(s.dropFirst(p.count))
                 break
             }
-            return Self.uncheckedMark + s
+            return pad + Self.uncheckedMark + s
         }
         let joined = out.joined(separator: "\n")
         let newAll = ns.replacingCharacters(in: lr, with: joined)
@@ -1155,14 +1163,26 @@ final class TextEditBridge {
         return nil
     }
 
-    /// 行首若带勾选标记，返回去掉标记后的正文；否则返回 nil
-    static func stripMark(in line: String) -> String? {
-        for checked in [true, false] {
-            if let p = markerPrefix(in: line, checked: checked) {
-                return String(line.dropFirst(p.count))
-            }
+    /// 行首勾选标记（允许前面有缩进空格，缩进后也要能正常渲染方框）。
+    /// 返回：标记字符在行内的位置、标记前缀总长（含尾随空格）、是否已勾选
+    static func markInfo(in line: String) -> (loc: Int, len: Int, checked: Bool)? {
+        let ns = line as NSString
+        var i = 0
+        while i < ns.length, ns.character(at: i) == 0x20 { i += 1 }
+        let rest = i == 0 ? line : ns.substring(from: i)
+        if let p = markerPrefix(in: rest, checked: true) {
+            return (loc: i, len: i + (p as NSString).length, checked: true)
+        }
+        if let p = markerPrefix(in: rest, checked: false) {
+            return (loc: i, len: i + (p as NSString).length, checked: false)
         }
         return nil
+    }
+
+    /// 行首若带勾选标记（含缩进）返回去掉标记与缩进后的正文；否则返回 nil
+    static func stripMark(in line: String) -> String? {
+        guard let info = markInfo(in: line) else { return nil }
+        return (line as NSString).substring(from: info.len)
     }
 
     /// 旧写法（⬜️ / ✅ / - [ ] / - [x] / ☐ / ☑️）统一迁移为新标记
@@ -1247,8 +1267,7 @@ final class TextEditBridge {
     }
 
     /// 覆盖当前选区的整行范围（含行尾换行）
-    private func lineRange(_ tv: UITextView, ns: NSString) -> NSRange {
-        let len = ns.length
+    private func lineRange(_ tv: UITextView, ns: NSString) -> NSRange {        let len = ns.length
         if len == 0 { return NSRange(location: 0, length: 0) }
         var loc = tv.selectedRange.location
         if loc >= len { loc = len - 1 }
@@ -1271,6 +1290,18 @@ final class TextEditBridge {
         var rest = String(s[s.index(after: dot)...])
         if rest.hasPrefix(" ") { rest = String(rest.dropFirst()) }
         return rest
+    }
+
+    /// 行级操作（列表/引用/编号）前的预处理：把每行拆成「缩进 + 正文」，并摘掉行首勾选框。
+    /// 不摘的话列表符号会插在方框前面，方框不在行首就渲染不出来、露出标记字符变成乱码。
+    private func linesWithoutCheckbox(_ comps: [String]) -> [(pad: String, body: String)] {
+        comps.map { c -> (pad: String, body: String) in
+            if let info = Self.markInfo(in: c) {
+                return (pad: String(repeating: " ", count: info.loc),
+                        body: (c as NSString).substring(from: info.len))
+            }
+            return (pad: "", body: c)
+        }
     }
 }
 

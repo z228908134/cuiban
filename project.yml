@@ -22,8 +22,8 @@ targets:
       properties:
         CFBundleDisplayName: 催办
         CFBundleName: Cuiban
-        CFBundleShortVersionString: "1.6.7"
-        CFBundleVersion: "18"
+        CFBundleShortVersionString: "1.6.8"
+        CFBundleVersion: "19"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
@@ -42,5 +42,5 @@ targets:
         PRODUCT_NAME: Cuiban
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "18"
-        MARKETING_VERSION: "1.6.7"
+        CURRENT_PROJECT_VERSION: "19"
+        MARKETING_VERSION: "1.6.8"
