@@ -656,22 +656,28 @@ struct NoteBodyEditor: UIViewRepresentable {
             return Self.tapHitsCheckbox(tap: tap, tv: tv)
         }
 
+        /// 容器原点在 view 坐标系里的位置（= textContainerInset 的偏移）
+        private static func containerOrigin(in tv: UITextView) -> CGPoint {
+            let inset = tv.textContainerInset
+            return CGPoint(x: inset.left, y: inset.top)
+        }
+
         /// tap 点位换算到 text container 坐标（characterIndex 要的是容器坐标）
         private static func containerPoint(_ p: CGPoint, in tv: UITextView) -> CGPoint {
-            let org = tv.layoutManager.textContainerOrigin
+            let org = containerOrigin(in: tv)
             return CGPoint(x: p.x - org.x, y: p.y - org.y)
         }
 
         /// 行首字符（方框附件）在 view 坐标系里的矩形（放宽边距，好点）
         private static func checkboxRect(tv: UITextView, charIndex: Int) -> CGRect? {
-            guard let lm = tv.layoutManager else { return nil }
+            let lm = tv.layoutManager
             let glyphRange = lm.glyphRange(
                 forCharacterRange: NSRange(location: charIndex, length: 1),
                 actualCharacterRange: nil
             )
             guard glyphRange.length > 0 else { return nil }
             var r = lm.boundingRect(forGlyphRange: glyphRange, in: tv.textContainer)
-            let org = lm.textContainerOrigin
+            let org = containerOrigin(in: tv)
             r.origin.x += org.x
             r.origin.y += org.y
             return r.insetBy(dx: -10, dy: -7)
