@@ -406,7 +406,7 @@ struct NoteBodyEditor: UIViewRepresentable {
     static let attachChar: Character = "\u{FFFC}"
 
     func makeUIView(context: Context) -> UITextView {
-        let tv = UITextView()
+        let tv = CheckboxTextView()
         tv.font = Self.baseFont
         tv.textColor = .label
         tv.backgroundColor = .clear
@@ -435,23 +435,14 @@ struct NoteBodyEditor: UIViewRepresentable {
             guard let tv = tv, let bridge = bridge else { return }
             NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         }
-        // 点勾选框直接打勾 / 取消（滴答式交互）
-        // 必须挂 delegate，只有点在勾选框上时才接管这次点击，
-        // 否则会连「点正文唤起键盘」一起抢掉
-        let tap = UITapGestureRecognizer(
-            target: context.coordinator,
-            action: #selector(Coordinator.handleTap(_:))
-        )
-        tap.delegate = context.coordinator
-        tap.cancelsTouchesInView = true
-        tv.addGestureRecognizer(tap)
-        // 关键：系统自带的「点按定位光标」手势比我们早添加、优先级更高，
-        // 不处理的话点勾选框时光标先响应、我们的手势直接失败。
-        // 让系统所有点按类手势都先等我们的手势失败，只有非勾选框区域才轮到它们。
-        for other in tv.gestureRecognizers ?? [] where other !== tap {
-            if other is UITapGestureRecognizer || other is UILongPressGestureRecognizer {
-                other.require(toFail: tap)
-            }
+        // 点勾选框直接打勾 / 取消（滴答式交互）。
+        // 用 hitTest 在触摸入口直接拦截：点中方框的触摸根本不进 UITextView 的手势系统。
+        // 之前外挂 UITapGestureRecognizer 一直修不好——系统「点按定位光标」手势
+        // 优先级更高，require(toFail:) 又会拖坏长按选择文字；hitTest 一劳永逸。
+        let coordinator = context.coordinator
+        tv.checkboxHitTest = { [weak tv] point in
+            guard let tv = tv else { return false }
+            return coordinator.toggleCheckbox(at: point, in: tv)
         }
         NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         bridge.record(tv)
@@ -621,7 +612,7 @@ struct NoteBodyEditor: UIViewRepresentable {
         tv.selectedRange = sel
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate, UIGestureRecognizerDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate {
         var parent: NoteBodyEditor
         init(_ p: NoteBodyEditor) { parent = p }
 
@@ -655,92 +646,56 @@ struct NoteBodyEditor: UIViewRepresentable {
                                    pending: parent.bridge.pendingTraits)
         }
 
-        // MARK: 点勾选框打勾
+        // MARK: 点勾选框打勾（触摸入口拦截，见 CheckboxTextView）
 
-        /// 只有点击落在勾选框附近时才接管这次点击，其余照常编辑
-        func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
-            guard let tap = g as? UITapGestureRecognizer,
-                  let tv = parent.bridge.textView else { return true }
-            return Self.tapHitsCheckbox(tap: tap, tv: tv)
-        }
-
-        /// 容器原点在 view 坐标系里的位置。
-        /// = textContainerInset 偏移，再减去已滚动的内容高度（没滚动时 contentOffset ≤ 0，取 0）
-        private static func containerOrigin(in tv: UITextView) -> CGPoint {
-            let inset = tv.textContainerInset
-            let scrolled = max(0, tv.contentOffset.y)
-            return CGPoint(x: inset.left, y: inset.top - scrolled)
-        }
-
-        /// tap 点位换算到 text container 坐标（characterIndex 要的是容器坐标）
-        private static func containerPoint(_ p: CGPoint, in tv: UITextView) -> CGPoint {
-            let org = containerOrigin(in: tv)
-            return CGPoint(x: p.x - org.x, y: p.y - org.y)
-        }
-
-        /// 行首字符（方框附件）在 view 坐标系里的矩形（放宽边距，好点）
-        private static func checkboxRect(tv: UITextView, charIndex: Int) -> CGRect? {
-            let lm = tv.layoutManager
-            let glyphRange = lm.glyphRange(
-                forCharacterRange: NSRange(location: charIndex, length: 1),
-                actualCharacterRange: nil
-            )
-            guard glyphRange.length > 0 else { return nil }
-            var r = lm.boundingRect(forGlyphRange: glyphRange, in: tv.textContainer)
-            let org = containerOrigin(in: tv)
-            r.origin.x += org.x
-            r.origin.y += org.y
-            return r.insetBy(dx: -10, dy: -7)
-        }
-
-        private static func tapHitsCheckbox(tap: UITapGestureRecognizer, tv: UITextView) -> Bool {
-            let attr = tv.attributedText ?? NSAttributedString()
-            let ns = attr.string as NSString
-            guard ns.length > 0 else { return false }
-            // 等长校验：有外部附件时放弃接管，避免索引错位
-            guard (NoteBodyEditor.plainText(attr) as NSString).length == ns.length else { return false }
-            let raw = tap.location(in: tv)
-            let p = containerPoint(raw, in: tv)
-            let idx = tv.layoutManager.characterIndex(
-                for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
-            )
-            guard idx != NSNotFound, idx >= 0, idx < ns.length else { return false }
-            let lr = ns.lineRange(for: NSRange(location: idx, length: 0))
-            let line = ns.substring(with: lr)
-            // 这一行必须是勾选行（行首是附件占位符或标记字符）
-            guard line.hasPrefix(String(NoteBodyEditor.attachChar))
-                || line.hasPrefix(TextEditBridge.checkedMarkRaw)
-                || line.hasPrefix(TextEditBridge.uncheckedMarkRaw) else { return false }
-            // 命中判定：点在方框图形（放宽边距）内，或索引就落在行首前两个字符
-            if let rect = checkboxRect(tv: tv, charIndex: lr.location), rect.contains(raw) {
-                return true
+        /// 命中判定：点落在某个勾选行「行首方框」的热区里 → 返回那一行的范围。
+        /// 用 caretRect 拿方框位置：它由系统按 inset / 滚动偏移算好，永远和光标所见一致，
+        /// 不再自己换算 textContainer 坐标（之前那套换算就是一直不准的根源）。
+        private static func checkboxLine(at point: CGPoint, in tv: UITextView) -> NSRange? {
+            let ns = (tv.text ?? "") as NSString
+            var loc = 0
+            while loc < ns.length {
+                let lr = ns.lineRange(for: NSRange(location: loc, length: 0))
+                if lr.length > 0 {
+                    let line = ns.substring(with: lr)
+                    let isCheckLine = line.hasPrefix(String(NoteBodyEditor.attachChar))
+                        || line.hasPrefix(TextEditBridge.checkedMarkRaw)
+                        || line.hasPrefix(TextEditBridge.uncheckedMarkRaw)
+                    if isCheckLine,
+                       let pos = tv.position(from: tv.beginningOfDocument, offset: lr.location) {
+                        let cr = tv.caretRect(for: pos)
+                        // 方框 17pt，手指点不准，热区左右各放宽，纵向整行高
+                        let hot = CGRect(x: cr.minX - 9,
+                                         y: cr.minY - 6,
+                                         width: 36,
+                                         height: cr.height + 12)
+                        if hot.contains(point) { return lr }
+                        // 兜底：让系统告诉我们这个点最近的字符位置（同样是系统算坐标，最稳）
+                        if let near = tv.closestPosition(to: point) {
+                            let idx = tv.offset(from: tv.beginningOfDocument, to: near)
+                            if idx == lr.location || idx == lr.location + 1 { return lr }
+                        }
+                    }
+                }
+                if lr.length == 0 { break }
+                loc = lr.location + lr.length
             }
-            let rel = idx - lr.location
-            return rel == 0 || rel == 1
+            return nil
         }
 
-        @objc func handleTap(_ g: UITapGestureRecognizer) {
-            guard let tv = parent.bridge.textView else { return }
+        /// 点在勾选框上：切换勾选状态。返回 true 表示已接管（hitTest 会吞掉这次触摸）
+        func toggleCheckbox(at point: CGPoint, in tv: UITextView) -> Bool {
+            guard let lr = Self.checkboxLine(at: point, in: tv) else { return false }
             // 中文输入法还有拼音组合串时先提交，否则样式重排会被跳过，
-            // 方框标记字符裸显示成「看不清的字 + 空格」
+            // 方框标记字符会裸显示成「看不清的字 + 空格」
             if tv.markedTextRange != nil {
                 tv.unmarkText()
             }
-            let attr = tv.attributedText ?? NSAttributedString()
-            let ns = attr.string as NSString
-            guard ns.length > 0 else { return }
-            let plain = NoteBodyEditor.plainText(attr)
-            guard (plain as NSString).length == ns.length else { return }
-            let raw = g.location(in: tv)
-            let p = Self.containerPoint(raw, in: tv)
-            let idx = tv.layoutManager.characterIndex(
-                for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
-            )
-            guard idx != NSNotFound, idx >= 0, idx < ns.length else { return }
+            let plain = NoteBodyEditor.plainText(tv.attributedText)
             let plainNS = plain as NSString
-            let lr = plainNS.lineRange(
-                for: NSRange(location: min(idx, plainNS.length - 1), length: 0)
-            )
+            // 等长校验：附件占位符与标记字符 1:1，长度不一致说明有异常内容，放弃接管
+            guard (tv.text ?? "").utf16.count == plainNS.length,
+                  lr.location + lr.length <= plainNS.length else { return false }
             let line = plainNS.substring(with: lr)
             var newLine: String? = nil
             if let u = TextEditBridge.markerPrefix(in: line, checked: false) {
@@ -748,16 +703,14 @@ struct NoteBodyEditor: UIViewRepresentable {
             } else if let c = TextEditBridge.markerPrefix(in: line, checked: true) {
                 newLine = TextEditBridge.uncheckedMark + String(line.dropFirst(c.count))
             }
-            guard let nl = newLine else { return }
+            guard let nl = newLine else { return false }
+
             let newAll = plainNS.replacingCharacters(in: lr, with: nl)
             parent.bridge.adjustStyles(old: plain, new: newAll)
             tv.text = newAll
-            // 光标保持在这一行内的相对位置
-            let rel = idx - lr.location
             let newNS = newAll as NSString
-            let lineLen = (nl as NSString).length
             tv.selectedRange = NSRange(
-                location: min(lr.location + min(max(rel, 0), max(lineLen - 1, 0)), newNS.length),
+                location: min(lr.location + max((nl as NSString).length - 1, 0), newNS.length),
                 length: 0
             )
             NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
@@ -767,7 +720,35 @@ struct NoteBodyEditor: UIViewRepresentable {
                 parent.text = newAll
             }
             parent.bridge.record(tv)
+            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            return true
         }
+    }
+}
+
+// MARK: - 勾选框可点的正文视图
+
+/// 勾选框交互的关键：点在方框上的触摸在 hitTest 阶段直接被吞掉，
+/// 不进入 UITextView 自己的任何手势。
+/// 为什么不用外挂 UITapGestureRecognizer：UITextView 内部的「点按定位光标」手势
+/// 比外挂手势先添加、优先响应，外挂手势会被它抢先判负（这就是勾选框一直点不动的根因）；
+/// 而 require(toFail:) 让系统手势等外挂手势失败，又会把长按选择文字拖坏。
+final class CheckboxTextView: UITextView {
+    /// 返回 true 表示该点命中勾选框、已完成切换
+    var checkboxHitTest: ((CGPoint) -> Bool)? = nil
+    private var lastToggleAt: CFTimeInterval = -10
+
+    override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
+        // 只在「手指刚按下」这一个事件上判定，避免同一次触摸的移动/抬起重复触发
+        if let event = event,
+           event.allTouches?.contains(where: { $0.phase == .began }) == true,
+           CACurrentMediaTime() - lastToggleAt > 0.35,
+           let cb = checkboxHitTest,
+           cb(point) {
+            lastToggleAt = CACurrentMediaTime()
+            return nil
+        }
+        return super.hitTest(point, with: event)
     }
 }
 
