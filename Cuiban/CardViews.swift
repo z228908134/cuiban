@@ -535,10 +535,7 @@ struct CardDetailView: View {
 
 // MARK: - 新建 / 编辑卡片
 
-struct CardEditView: View {
-    /// nil = 新建
-    let card: CardItem?
-
+/// 选图来源（sheet(item:) 需要 Identifiable）
 private enum PhotoSource: Int, Identifiable {
     case library, camera
     var id: Int { rawValue }
@@ -547,7 +544,7 @@ private enum PhotoSource: Int, Identifiable {
 // MARK: - 表单里的文字样式
 
 extension View {
-    /// 表单右侧的「值」：品牌色，和参考图一致
+    /// 表单右侧的「值」：蓝色，和参考图一致
     func value() -> some View {
         font(.app(15))
             .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
@@ -559,6 +556,10 @@ extension View {
             .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
     }
 }
+
+struct CardEditView: View {
+    /// nil = 新建
+    let card: CardItem?
 
     @ObservedObject private var store = CardStore.shared
     @Environment(\.dismiss) private var dismiss
