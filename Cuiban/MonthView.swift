@@ -306,29 +306,24 @@ struct MonthView: View {
                             .contentShape(Rectangle())
                             .onTapGesture { detail = e.task }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                                // 纯图标 + 圆形底，编辑在前、删除在后（与卡片页一致）
+                                // 蓝 / 红两色，纯图标 + 圆形底（与卡片页一致）。
+                                // 不能用 role: .destructive：系统会强制把 tint 覆盖成灰色。
+                                // 显示顺序 = 声明顺序倒序，先声明删除（显示在最外侧）。
+                                Button {
+                                    store.delete(id: e.task.id)
+                                } label: {
+                                    calendarSwipeIcon("trash")
+                                }
+                                .buttonStyle(.plain)
+                                .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
+
                                 Button {
                                     editing = e.task
                                 } label: {
-                                    Image(systemName: "square.and.pencil")
-                                        .font(.app(17, weight: .semibold))
-                                        .foregroundColor(.white)
-                                        .frame(width: 34, height: 34)
-                                        .background(Circle().fill(.white.opacity(0.22)))
+                                    calendarSwipeIcon("square.and.pencil")
                                 }
                                 .buttonStyle(.plain)
-                                .tint(.blue)
-
-                                Button(role: .destructive) {
-                                    store.delete(id: e.task.id)
-                                } label: {
-                                    Image(systemName: "trash")
-                                        .font(.app(17, weight: .semibold))
-                                        .foregroundColor(.white)
-                                        .frame(width: 34, height: 34)
-                                        .background(Circle().fill(.white.opacity(0.22)))
-                                }
-                                .buttonStyle(.plain)
+                                .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
                             }
                             .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                             .listRowSeparator(.hidden)
@@ -445,6 +440,15 @@ struct MonthView: View {
                 .frame(height: 0.5)
                 .padding(.leading, 44)
         }
+    }
+
+    /// 左滑按钮里的白色图标 + 圆形半透明底
+    private func calendarSwipeIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.app(18, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(.white.opacity(0.25)))
     }
 
     // MARK: - 数据

@@ -133,14 +133,18 @@ struct TaskListView: View {
         .contentShape(Rectangle())
         .onTapGesture { detail = t }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            // 纯图标 + 圆形底；顺序：编辑 → 延后（闹钟）→ 删除
+            // 蓝 / 橙 / 红三色，纯图标 + 圆形底。
+            // 注意：不能给删除用 role: .destructive —— 系统会强制把 tint 覆盖成灰色，
+            // 三个按钮就全灰了（之前就是这样）。所以一律普通 Button + 显式 .tint。
+            // 显示顺序 = 声明顺序的倒序（trailing 边从内到外排），所以想显示成
+            // 「编辑 → 延后 → 删除」就得反着声明。
             Button {
-                editing = t
+                store.delete(id: t.id)
             } label: {
-                swipeIcon("square.and.pencil")
+                swipeIcon("trash")
             }
             .buttonStyle(.plain)
-            .tint(.blue)
+            .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
 
             Button {
                 store.snooze(id: t.id)
@@ -148,24 +152,25 @@ struct TaskListView: View {
                 swipeIcon("alarm")
             }
             .buttonStyle(.plain)
-            .tint(.orange)
+            .tint(Color(red: 0.98, green: 0.58, blue: 0.00))
 
-            Button(role: .destructive) {
-                store.delete(id: t.id)
+            Button {
+                editing = t
             } label: {
-                swipeIcon("trash")
+                swipeIcon("square.and.pencil")
             }
             .buttonStyle(.plain)
+            .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
         }
     }
 
-    /// 左滑按钮里的圆角图标
+    /// 左滑按钮里的白色图标 + 圆形半透明底
     private func swipeIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.app(17, weight: .semibold))
+            .font(.app(18, weight: .semibold))
             .foregroundColor(.white)
-            .frame(width: 34, height: 34)
-            .background(Circle().fill(.white.opacity(0.22)))
+            .frame(width: 36, height: 36)
+            .background(Circle().fill(.white.opacity(0.25)))
     }
 
     /// 时间高亮标签：逾期红、当天橙、以后蓝、已完成灰。

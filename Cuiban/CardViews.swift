@@ -210,32 +210,27 @@ struct CardListView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { detail = c }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            // 纯图标 + 圆形底：系统按钮宽度跟着内容走，去掉文字后窄一半
+                            // 蓝 / 红两色，纯图标 + 圆形底。
+                            // 不能用 role: .destructive：系统会强制把 tint 覆盖成灰色。
+                            // 显示顺序 = 声明顺序倒序，所以先声明删除（显示在最外侧）。
                             Button {
-                                editing = c
-                            } label: {
-                                Image(systemName: "square.and.pencil")
-                                    .font(.app(17, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 34, height: 34)
-                                    .background(Circle().fill(.white.opacity(0.22)))
-                            }
-                            .buttonStyle(.plain)
-                            .tint(.blue)
-
-                            Button(role: .destructive) {
                                 alertInfo = AlertInfo(
                                     title: "删除这张卡片？",
                                     message: c.displayName,
                                     okTitle: "删除") { store.delete(id: c.id) }
                             } label: {
-                                Image(systemName: "trash")
-                                    .font(.app(17, weight: .semibold))
-                                    .foregroundColor(.white)
-                                    .frame(width: 34, height: 34)
-                                    .background(Circle().fill(.white.opacity(0.22)))
+                                cardSwipeIcon("trash")
                             }
                             .buttonStyle(.plain)
+                            .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
+
+                            Button {
+                                editing = c
+                            } label: {
+                                cardSwipeIcon("square.and.pencil")
+                            }
+                            .buttonStyle(.plain)
+                            .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
                         }
                         .contextMenu {
                             // 长按只做「复制」，编辑和删除走左滑
@@ -258,6 +253,15 @@ struct CardListView: View {
             .background(Color(UIColor.systemGroupedBackground))
         }
     }
+}
+
+/// 左滑按钮里的白色图标 + 圆形半透明底
+private func cardSwipeIcon(_ name: String) -> some View {
+    Image(systemName: name)
+        .font(.app(18, weight: .semibold))
+        .foregroundColor(.white)
+        .frame(width: 36, height: 36)
+        .background(Circle().fill(.white.opacity(0.25)))
 }
 
 /// 列表里的一行：银行名 / 类型+备注+户主 / 大号卡号
