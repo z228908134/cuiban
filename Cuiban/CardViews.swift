@@ -313,7 +313,9 @@ struct CardSwipeRow<Content: View>: View {
                 .buttonStyle(.plain)
             }
             content()
-                .background(Color(UIColor.systemBackground))
+                // 底色必须和卡片本身一致（卡片是 secondarySystemGroupedBackground）。
+                // 这里如果用 systemBackground（白），滑动位移过程中就会从圆角边缘露出白底，看起来「闪一下」
+                .background(Color(UIColor.secondarySystemGroupedBackground))
                 .offset(x: offset)
                 .contentShape(Rectangle())
                 .onTapGesture {
@@ -322,15 +324,21 @@ struct CardSwipeRow<Content: View>: View {
                 .gesture(swipe)
         }
         .clipShape(RoundedRectangle(cornerRadius: 14))
+        .contentShape(Rectangle())
     }
 
     private var offset: CGFloat {
         let base: CGFloat = revealed ? -revealWidth : 0
-        return isDragging ? min(0, max(-revealWidth - 40, base + dragX)) : base
+        // 正在拖拽：基准位置 + 本次位移。松手时 revealed 与 dragX 在同一个动画里归位，
+        // 不会出现「先瞬移回原位再滑过去」的跳帧闪烁。
+        return min(0, max(-revealWidth - 40, base + dragX))
     }
 
     private func close() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { revealed = false }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+            revealed = false
+            dragX = 0
+        }
     }
 
     private var swipe: some Gesture {
@@ -338,16 +346,22 @@ struct CardSwipeRow<Content: View>: View {
             .onChanged { v in
                 // 竖向滑动留给 ScrollView，横向为主时才接管
                 guard abs(v.translation.width) > abs(v.translation.height) else { return }
-                isDragging = true
-                dragX = v.translation.width
+                if !isDragging {
+                    isDragging = true
+                    // 接管时把当前位移一次性吃掉，避免和基准位置叠加
+                    dragX = revealed ? v.translation.width + revealWidth : v.translation.width
+                    return
+                }
+                dragX = revealed ? v.translation.width + revealWidth : v.translation.width
             }
             .onEnded { v in
                 guard isDragging else { return }
                 isDragging = false
-                dragX = 0
                 let target = (revealed ? -revealWidth : 0) + v.translation.width
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                    revealed = target < -revealWidth / 2
+                let shouldOpen = target < -revealWidth / 2
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                    revealed = shouldOpen
+                    dragX = 0
                 }
             }
     }

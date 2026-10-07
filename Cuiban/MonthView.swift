@@ -547,11 +547,16 @@ private struct SwipeableRow<Content: View>: View {
 
     private var offset: CGFloat {
         let base: CGFloat = revealed ? -revealWidth : 0
-        return isDragging ? min(0, max(-revealWidth - 40, base + dragX)) : base
+        // 拖拽中用「基准 + 本次位移」，松手时 revealed 和 dragX 在同一个动画里归位。
+        // 写成 isDragging ? ... : base 会在松手瞬间先瞬移回基准位置再滑过去，会闪一下。
+        return min(0, max(-revealWidth - 40, base + dragX))
     }
 
     private func close() {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { revealed = false }
+        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+            revealed = false
+            dragX = 0
+        }
     }
 
     private var swipe: some Gesture {
@@ -560,15 +565,16 @@ private struct SwipeableRow<Content: View>: View {
                 // 垂直滑动交给 ScrollView，只有横向为主时才接管
                 guard abs(v.translation.width) > abs(v.translation.height) else { return }
                 isDragging = true
-                dragX = v.translation.width
+                dragX = revealed ? v.translation.width + revealWidth : v.translation.width
             }
             .onEnded { v in
                 guard isDragging else { return }
                 isDragging = false
-                dragX = 0
                 let target = (revealed ? -revealWidth : 0) + v.translation.width
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                    revealed = target < -revealWidth / 2
+                let shouldOpen = target < -revealWidth / 2
+                withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
+                    revealed = shouldOpen
+                    dragX = 0
                 }
             }
     }
