@@ -413,7 +413,7 @@ struct SettingsView: View {
                         if let n = davNotice {
                             Text(n)
                                 .font(.app(12))
-                                .foregroundColor(davNotice.hasPrefix("连接成功") ? .green : .orange)
+                                .foregroundColor(n.hasPrefix("连接成功") ? .green : .orange)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
                     }
