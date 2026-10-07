@@ -133,24 +133,39 @@ struct TaskListView: View {
         .contentShape(Rectangle())
         .onTapGesture { detail = t }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-            Button(role: .destructive) {
-                store.delete(id: t.id)
-            } label: {
-                Label("删除", systemImage: "trash")
-            }
+            // 纯图标 + 圆形底；顺序：编辑 → 延后（闹钟）→ 删除
             Button {
                 editing = t
             } label: {
-                Label("编辑", systemImage: "square.and.pencil")
+                swipeIcon("square.and.pencil")
             }
+            .buttonStyle(.plain)
             .tint(.blue)
+
             Button {
                 store.snooze(id: t.id)
             } label: {
-                Label("延后", systemImage: "clock.arrow.circlepath")
+                swipeIcon("alarm")
             }
+            .buttonStyle(.plain)
             .tint(.orange)
+
+            Button(role: .destructive) {
+                store.delete(id: t.id)
+            } label: {
+                swipeIcon("trash")
+            }
+            .buttonStyle(.plain)
         }
+    }
+
+    /// 左滑按钮里的圆角图标
+    private func swipeIcon(_ name: String) -> some View {
+        Image(systemName: name)
+            .font(.app(17, weight: .semibold))
+            .foregroundColor(.white)
+            .frame(width: 34, height: 34)
+            .background(Circle().fill(.white.opacity(0.22)))
     }
 
     /// 时间高亮标签：逾期红、当天橙、以后蓝、已完成灰。

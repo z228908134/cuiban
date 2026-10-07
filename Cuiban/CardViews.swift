@@ -210,13 +210,17 @@ struct CardListView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { detail = c }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            // 系统 swipeActions 的按钮宽度跟着标题走，用两字（「改 / 删」）
-                            // 比「编辑 / 删除」窄一半，露出得更克制
+                            // 纯图标 + 圆形底：系统按钮宽度跟着内容走，去掉文字后窄一半
                             Button {
                                 editing = c
                             } label: {
-                                Label("改", systemImage: "square.and.pencil")
+                                Image(systemName: "square.and.pencil")
+                                    .font(.app(17, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(Circle().fill(.white.opacity(0.22)))
                             }
+                            .buttonStyle(.plain)
                             .tint(.blue)
 
                             Button(role: .destructive) {
@@ -225,8 +229,13 @@ struct CardListView: View {
                                     message: c.displayName,
                                     okTitle: "删除") { store.delete(id: c.id) }
                             } label: {
-                                Label("删", systemImage: "trash")
+                                Image(systemName: "trash")
+                                    .font(.app(17, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .frame(width: 34, height: 34)
+                                    .background(Circle().fill(.white.opacity(0.22)))
                             }
+                            .buttonStyle(.plain)
                         }
                         .contextMenu {
                             // 长按只做「复制」，编辑和删除走左滑
@@ -251,12 +260,12 @@ struct CardListView: View {
     }
 }
 
-/// 列表里的一行：银行名 / 类型+备注 / 大号卡号
+/// 列表里的一行：银行名 / 类型+备注+户主 / 大号卡号
 struct CardRow: View {
     let card: CardItem
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 5) {
             HStack(spacing: 6) {
                 Text(card.displayName)
                     .font(.app(17, weight: .semibold))
@@ -268,10 +277,12 @@ struct CardRow: View {
                 }
                 Spacer()
             }
-            Text(card.subtitle)
-                .font(.app(12))
-                .foregroundColor(.secondary)
-                .lineLimit(1)
+            if card.subtitle != card.type.label {
+                Text(card.subtitle)
+                    .font(.app(12))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
             if !card.number.isEmpty {
                 Text(card.numberGrouped)
                     .font(.app(17, weight: .medium, design: .monospaced))
@@ -281,12 +292,13 @@ struct CardRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 14)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 15)
+        .padding(.vertical, 13)
         .background(
-            RoundedRectangle(cornerRadius: 14)
+            RoundedRectangle(cornerRadius: 16)
                 .fill(Color(UIColor.secondarySystemGroupedBackground))
         )
+        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 }
 

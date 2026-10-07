@@ -306,18 +306,29 @@ struct MonthView: View {
                             .contentShape(Rectangle())
                             .onTapGesture { detail = e.task }
                             .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                                // 纯图标 + 圆形底，编辑在前、删除在后（与卡片页一致）
                                 Button {
                                     editing = e.task
                                 } label: {
-                                    Label("改", systemImage: "square.and.pencil")
+                                    Image(systemName: "square.and.pencil")
+                                        .font(.app(17, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .frame(width: 34, height: 34)
+                                        .background(Circle().fill(.white.opacity(0.22)))
                                 }
+                                .buttonStyle(.plain)
                                 .tint(.blue)
 
                                 Button(role: .destructive) {
                                     store.delete(id: e.task.id)
                                 } label: {
-                                    Label("删", systemImage: "trash")
+                                    Image(systemName: "trash")
+                                        .font(.app(17, weight: .semibold))
+                                        .foregroundColor(.white)
+                                        .frame(width: 34, height: 34)
+                                        .background(Circle().fill(.white.opacity(0.22)))
                                 }
+                                .buttonStyle(.plain)
                             }
                             .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                             .listRowSeparator(.hidden)
