@@ -228,7 +228,6 @@ struct CardListView: View {
                             } label: {
                                 cardSwipeIcon("trash")
                             }
-                            .buttonStyle(.plain)
                             .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
 
                             Button {
@@ -236,7 +235,6 @@ struct CardListView: View {
                             } label: {
                                 cardSwipeIcon("square.and.pencil")
                             }
-                            .buttonStyle(.plain)
                             .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
                         }
                         .contextMenu {
@@ -262,13 +260,13 @@ struct CardListView: View {
     }
 }
 
-/// 左滑按钮里的白色图标 + 圆形半透明底
+/// 左滑按钮里的图标。底色交给系统按 .tint 上色（蓝/红），
+/// 这里不要再自绘背景，也不要加 .buttonStyle(.plain) —— plain 会把 tint 上色关掉、按钮变全灰。
 private func cardSwipeIcon(_ name: String) -> some View {
     Image(systemName: name)
-        .font(.app(18, weight: .semibold))
+        .font(.app(19, weight: .semibold))
         .foregroundColor(.white)
-        .frame(width: 36, height: 36)
-        .background(Circle().fill(.white.opacity(0.25)))
+        .frame(width: 30, height: 30)
 }
 
 /// 列表里的一行：银行名 / 类型+备注+户主 / 大号卡号

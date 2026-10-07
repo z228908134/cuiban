@@ -145,7 +145,6 @@ struct TaskListView: View {
             } label: {
                 swipeIcon("trash")
             }
-            .buttonStyle(.plain)
             .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
 
             Button {
@@ -153,7 +152,6 @@ struct TaskListView: View {
             } label: {
                 swipeIcon("alarm")
             }
-            .buttonStyle(.plain)
             .tint(Color(red: 0.98, green: 0.58, blue: 0.00))
 
             Button {
@@ -161,18 +159,17 @@ struct TaskListView: View {
             } label: {
                 swipeIcon("square.and.pencil")
             }
-            .buttonStyle(.plain)
             .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
         }
     }
 
-    /// 左滑按钮里的白色图标 + 圆形半透明底
+    /// 左滑按钮里的图标。底色交给系统按 .tint 上色，
+    /// 这里不要自绘背景，也不要给按钮加 .buttonStyle(.plain)——plain 会关掉 tint 上色、按钮全灰。
     private func swipeIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.app(18, weight: .semibold))
+            .font(.app(19, weight: .semibold))
             .foregroundColor(.white)
-            .frame(width: 36, height: 36)
-            .background(Circle().fill(.white.opacity(0.25)))
+            .frame(width: 30, height: 30)
     }
 
     /// 时间高亮标签：清单列表 / 详情页 / 日历共用 DueBadge，这里只包一层保持调用点简洁

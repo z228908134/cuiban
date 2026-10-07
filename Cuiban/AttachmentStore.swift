@@ -185,6 +185,9 @@ struct PhotoViewer: View {
     let titles: [String]
     @State private var index: Int
     @Environment(\.presentationMode) private var presentationMode
+    /// 下拉关闭：跟手的位移与背景变暗程度
+    @State private var dragY: CGFloat = 0
+    @State private var dismissing = false
 
     init(images: [UIImage], titles: [String] = [], start: Int = 0) {
         self.images = images
@@ -192,54 +195,109 @@ struct PhotoViewer: View {
         self._index = State(initialValue: max(0, min(start, images.count - 1)))
     }
 
+    private var close: () -> Void { presentationMode.wrappedValue.dismiss() }
+
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            // 背景：下拉时露出下面的内容，越往下越透明
+            Color.black.opacity(1 - min(Double(dragY) / 900.0, 0.75))
+                .ignoresSafeArea()
 
             if images.isEmpty {
                 Text("图片读不出来了")
                     .foregroundColor(.white.opacity(0.8))
             } else {
-                TabView(selection: $index) {
-                    ForEach(images.indices, id: \.self) { i in
-                        VStack(spacing: 12) {
+                VStack(spacing: 10) {
+                    // 顶部提示条：第几张 / 怎么关闭
+                    HStack(spacing: 5) {
+                        if images.count > 1 {
+                            Text("\(index + 1) / \(images.count)")
+                                .font(.app(13, weight: .semibold))
+                                .foregroundColor(.white.opacity(0.9))
+                        }
+                        Text("· 下滑关闭")
+                            .font(.app(12))
+                            .foregroundColor(.white.opacity(0.6))
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .background(Capsule().fill(Color.white.opacity(0.16)))
+                    .padding(.top, 6)
+
+                    TabView(selection: $index) {
+                        ForEach(images.indices, id: \.self) { i in
                             Image(uiImage: images[i])
                                 .resizable()
                                 .scaledToFit()
                                 .padding(.horizontal, 8)
-
-                            if i < titles.count, !titles[i].isEmpty {
-                                Text(titles[i])
-                                    .font(.app(13))
-                                    .foregroundColor(.white.opacity(0.75))
-                                    .multilineTextAlignment(.center)
-                                    .padding(.horizontal, 20)
-                            }
+                                .tag(i)
                         }
-                        .tag(i)
                     }
+                    .tabViewStyle(.page(indexDisplayMode: .never))
+
+                    if index < titles.count, !titles[index].isEmpty {
+                        Text(titles[index])
+                            .font(.app(13))
+                            .foregroundColor(.white.opacity(0.78))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 24)
+                    }
+                    Spacer(minLength: 12)
                 }
-                .tabViewStyle(PageTabViewStyle(indexDisplayMode: images.count > 1 ? .automatic : .never))
+                // 只有图片区域响应下拉，TabView 仍能正常左右翻页
+                .offset(y: dragY)
+                .scaleEffect(1 - min(dragY / 4000.0, 0.06), anchor: .center)
             }
 
+            // 右上角关闭按钮：实心深色圆 + 白色描边 + 阴影，压在任何图片上都看得清
             VStack {
                 HStack {
                     Spacer()
-                    Button {
-                        presentationMode.wrappedValue.dismiss()
-                    } label: {
+                    Button(action: close) {
                         Image(systemName: "xmark")
-                            .font(.app(16, weight: .bold))
+                            .font(.app(17, weight: .bold))
                             .foregroundColor(.white)
-                            .frame(width: 34, height: 34)
-                            .background(Circle().fill(Color.white.opacity(0.18)))
+                            .frame(width: 38, height: 38)
+                            .background(Circle().fill(Color.black.opacity(0.72)))
+                            .overlay(Circle().strokeBorder(Color.white.opacity(0.85), lineWidth: 2))
+                            .shadow(color: .black.opacity(0.5), radius: 5, y: 2)
                     }
                     .buttonStyle(.plain)
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 10)
+                .padding(.top, 8)
                 Spacer()
             }
+            // 关闭按钮不参与下拉手势，点哪儿都能关
+            .allowsHitTesting(true)
         }
+        .contentShape(Rectangle())
+        .simultaneousGesture(dismissGesture)
+        .statusBarHidden(true)
+    }
+
+    /// 下滑关闭：跟手位移，松手按距离/速度决定是否关
+    private var dismissGesture: some Gesture {
+        DragGesture()
+            .onChanged { v in
+                guard !dismissing else { return }
+                // 只认向下；如果图片只有一张，往上也能拉（露出下方内容）
+                dragY = max(0, v.translation.height)
+            }
+            .onEnded { v in
+                guard !dismissing else { return }
+                // 位移够大或下滑够快就关
+                if v.translation.height > 110
+                    || (v.translation.height > 24
+                        && v.predictedEndTranslation.height > 260) {
+                    dismissing = true
+                    withAnimation(.easeOut(duration: 0.18)) { dragY = 900 }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { close() }
+                } else {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                        dragY = 0
+                    }
+                }
+            }
     }
 }

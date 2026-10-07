@@ -131,7 +131,6 @@ struct NotesView: View {
             } label: {
                 noteSwipeIcon("trash")
             }
-            .buttonStyle(.plain)
             .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
 
             Button {
@@ -139,18 +138,18 @@ struct NotesView: View {
             } label: {
                 noteSwipeIcon("square.and.pencil")
             }
-            .buttonStyle(.plain)
             .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
         }
     }
 
     /// 左滑按钮里的白色图标 + 圆形半透明底（与清单页同一规格）
+/// 左滑按钮里的图标。底色交给系统按 .tint 上色，
+    /// 这里不要自绘背景，也不要给按钮加 .buttonStyle(.plain)——plain 会关掉 tint 上色、按钮全灰。
     private func noteSwipeIcon(_ name: String) -> some View {
         Image(systemName: name)
-            .font(.app(18, weight: .semibold))
+            .font(.app(19, weight: .semibold))
             .foregroundColor(.white)
-            .frame(width: 36, height: 36)
-            .background(Circle().fill(.white.opacity(0.25)))
+            .frame(width: 30, height: 30)
     }
 
     /// 更新时间的标签配色：今天橙、7 天内蓝、更早灰
