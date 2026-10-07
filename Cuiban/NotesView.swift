@@ -649,11 +649,32 @@ struct NoteBodyEditor: UIViewRepresentable {
 
         // MARK: 点勾选框打勾
 
-        /// 只有点击落在勾选框标记上时才接管这次点击，其余照常编辑
+        /// 只有点击落在勾选框附近时才接管这次点击，其余照常编辑
         func gestureRecognizerShouldBegin(_ g: UIGestureRecognizer) -> Bool {
             guard let tap = g as? UITapGestureRecognizer,
                   let tv = parent.bridge.textView else { return true }
             return Self.tapHitsCheckbox(tap: tap, tv: tv)
+        }
+
+        /// tap 点位换算到 text container 坐标（characterIndex 要的是容器坐标）
+        private static func containerPoint(_ p: CGPoint, in tv: UITextView) -> CGPoint {
+            let org = tv.layoutManager.textContainerOrigin
+            return CGPoint(x: p.x - org.x, y: p.y - org.y)
+        }
+
+        /// 行首字符（方框附件）在 view 坐标系里的矩形（放宽边距，好点）
+        private static func checkboxRect(tv: UITextView, charIndex: Int) -> CGRect? {
+            guard let lm = tv.layoutManager else { return nil }
+            let glyphRange = lm.glyphRange(
+                forCharacterRange: NSRange(location: charIndex, length: 1),
+                actualCharacterRange: nil
+            )
+            guard glyphRange.length > 0 else { return nil }
+            var r = lm.boundingRect(forGlyphRange: glyphRange, in: tv.textContainer)
+            let org = lm.textContainerOrigin
+            r.origin.x += org.x
+            r.origin.y += org.y
+            return r.insetBy(dx: -10, dy: -7)
         }
 
         private static func tapHitsCheckbox(tap: UITapGestureRecognizer, tv: UITextView) -> Bool {
@@ -662,33 +683,44 @@ struct NoteBodyEditor: UIViewRepresentable {
             guard ns.length > 0 else { return false }
             // 等长校验：有外部附件时放弃接管，避免索引错位
             guard (NoteBodyEditor.plainText(attr) as NSString).length == ns.length else { return false }
-            let p = tap.location(in: tv)
+            let raw = tap.location(in: tv)
+            let p = containerPoint(raw, in: tv)
             let idx = tv.layoutManager.characterIndex(
                 for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
             )
-            guard idx >= 0, idx < ns.length else { return false }
+            guard idx != NSNotFound, idx >= 0, idx < ns.length else { return false }
             let lr = ns.lineRange(for: NSRange(location: idx, length: 0))
             let line = ns.substring(with: lr)
-            // 勾选框是行首第一个字符（附件占位符或标记字符）
+            // 这一行必须是勾选行（行首是附件占位符或标记字符）
             guard line.hasPrefix(String(NoteBodyEditor.attachChar))
                 || line.hasPrefix(TextEditBridge.checkedMarkRaw)
                 || line.hasPrefix(TextEditBridge.uncheckedMarkRaw) else { return false }
+            // 命中判定：点在方框图形（放宽边距）内，或索引就落在行首前两个字符
+            if let rect = checkboxRect(tv: tv, charIndex: lr.location), rect.contains(raw) {
+                return true
+            }
             let rel = idx - lr.location
-            return rel == 0
+            return rel == 0 || rel == 1
         }
 
         @objc func handleTap(_ g: UITapGestureRecognizer) {
             guard let tv = parent.bridge.textView else { return }
+            // 中文输入法还有拼音组合串时先提交，否则样式重排会被跳过，
+            // 方框标记字符裸显示成「看不清的字 + 空格」
+            if tv.markedTextRange != nil {
+                tv.unmarkText()
+            }
             let attr = tv.attributedText ?? NSAttributedString()
             let ns = attr.string as NSString
             guard ns.length > 0 else { return }
             let plain = NoteBodyEditor.plainText(attr)
             guard (plain as NSString).length == ns.length else { return }
-            let p = g.location(in: tv)
+            let raw = g.location(in: tv)
+            let p = Self.containerPoint(raw, in: tv)
             let idx = tv.layoutManager.characterIndex(
                 for: p, in: tv.textContainer, fractionOfDistanceBetweenInsertionPoints: nil
             )
-            guard idx >= 0, idx < ns.length else { return }
+            guard idx != NSNotFound, idx >= 0, idx < ns.length else { return }
             let plainNS = plain as NSString
             let lr = plainNS.lineRange(
                 for: NSRange(location: min(idx, plainNS.length - 1), length: 0)
@@ -1196,9 +1228,17 @@ final class TextEditBridge {
 
     /// 把 UITextView 里的附件占位符还原成标记字符，让后续字符串操作按纯文本进行
     private func syncPlain(_ tv: UITextView) {
+        // 中文输入法还有拼音组合串时先提交，否则样式重排会被跳过、工具开关失效
+        if tv.markedTextRange != nil {
+            tv.unmarkText()
+        }
         let plain = NoteBodyEditor.plainText(tv.attributedText)
         if plain != tv.text {
+            // 关键：重设 text 会把选区弄丢，斜体/加粗等选区开关就作用不上；
+            // 附件占位符与标记字符长度 1:1，选区位置可以直接原样保留
+            let sel = tv.selectedRange
             tv.text = plain
+            tv.selectedRange = sel
         }
     }
 

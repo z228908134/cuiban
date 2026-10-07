@@ -21,6 +21,7 @@ struct MonthView: View {
     @State private var anchor: Date = Date()
     @State private var selected: Date = Calendar.current.startOfDay(for: Date())
     @State private var editing: TaskItem? = nil
+    @State private var detail: TaskItem? = nil
     @State private var showingAdd = false
     /// true = 收起成周条（上滑）
     @State private var collapsed = false
@@ -58,6 +59,9 @@ struct MonthView: View {
             }
             .sheet(item: $editing) { t in
                 AddTaskView(editing: t)
+            }
+            .sheet(item: $detail) { t in
+                TaskDetailView(task: t)
             }
             .sheet(isPresented: $showingAdd) {
                 AddTaskView()
@@ -293,7 +297,13 @@ struct MonthView: View {
                     .padding(.bottom, 6)
 
                     ForEach(items) { e in
-                        entryRow(e)
+                        SwipeableRow(
+                            onTap: { detail = e.task },
+                            onEdit: { editing = e.task },
+                            onDelete: { store.delete(id: e.task.id) }
+                        ) {
+                            entryRow(e)
+                        }
                         Divider().padding(.leading, 16)
                     }
                     Color.clear.frame(height: 24)
@@ -367,11 +377,6 @@ struct MonthView: View {
                 }
                 .font(.system(size: 11))
                 .foregroundColor(.secondary)
-
-                if !e.task.photos.isEmpty {
-                    PhotoStrip(names: e.task.photos, size: 34, maxCount: 4)
-                        .padding(.top, 4)
-                }
             }
 
             Spacer(minLength: 4)
@@ -383,7 +388,6 @@ struct MonthView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 9)
         .contentShape(Rectangle())
-        .onTapGesture { editing = e.task }
     }
 
     // MARK: - 数据
@@ -471,5 +475,96 @@ struct MonthView: View {
             let target = min(day, maxDay)
             selected = cal.date(byAdding: .day, value: target - 1, to: interval.start) ?? interval.start
         }
+    }
+}
+
+// MARK: - 左滑操作行（ScrollView 里没有系统 swipeActions，自绘实现）
+
+/// 左滑露出「编辑 / 删除」，再滑回或点击收起；交互对齐系统 List 的左滑
+private struct SwipeableRow<Content: View>: View {
+    var onTap: () -> Void
+    var onEdit: () -> Void
+    var onDelete: () -> Void
+    @ViewBuilder var content: () -> Content
+
+    @State private var revealed = false
+    @State private var isDragging = false
+    @State private var dragX: CGFloat = 0
+    private let revealWidth: CGFloat = 128
+
+    var body: some View {
+        ZStack(alignment: .trailing) {
+            HStack(spacing: 0) {
+                Button {
+                    close()
+                    onEdit()
+                } label: {
+                    op(icon: "pencil", title: "编辑", color: Color(red: 0.2, green: 0.5, blue: 1.0))
+                        .frame(width: 64)
+                }
+                .buttonStyle(.plain)
+                Button {
+                    close()
+                    onDelete()
+                } label: {
+                    op(icon: "trash", title: "删除", color: .red)
+                        .frame(width: 64)
+                }
+                .buttonStyle(.plain)
+            }
+            content()
+                .background(Color(UIColor.systemBackground))
+                .offset(x: offset)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    if revealed {
+                        close()
+                    } else {
+                        onTap()
+                    }
+                }
+                .gesture(swipe)
+        }
+        .clipped()
+    }
+
+    private var offset: CGFloat {
+        let base: CGFloat = revealed ? -revealWidth : 0
+        return isDragging ? min(0, max(-revealWidth - 40, base + dragX)) : base
+    }
+
+    private func close() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { revealed = false }
+    }
+
+    private var swipe: some Gesture {
+        DragGesture(minimumDistance: 20)
+            .onChanged { v in
+                // 垂直滑动交给 ScrollView，只有横向为主时才接管
+                guard abs(v.translation.width) > abs(v.translation.height) else { return }
+                isDragging = true
+                dragX = v.translation.width
+            }
+            .onEnded { v in
+                guard isDragging else { return }
+                isDragging = false
+                dragX = 0
+                let target = (revealed ? -revealWidth : 0) + v.translation.width
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    revealed = target < -revealWidth / 2
+                }
+            }
+    }
+
+    private func op(icon: String, title: String, color: Color) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .medium))
+            Text(title)
+                .font(.system(size: 11, weight: .medium))
+        }
+        .foregroundColor(.white)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(color)
     }
 }

@@ -108,10 +108,6 @@ struct TaskListView: View {
                 Text(dueLine(t))
                     .font(.system(size: 12))
                     .foregroundColor(t.isOverdue ? .red : .secondary)
-                if !t.photos.isEmpty {
-                    PhotoStrip(names: t.photos, size: 38, maxCount: 4)
-                        .padding(.top, 4)
-                }
             }
 
             Spacer(minLength: 4)
