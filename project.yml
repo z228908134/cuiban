@@ -27,8 +27,8 @@ targets:
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations:
           - zh-Hans
-        CFBundleShortVersionString: "1.11.0"
-        CFBundleVersion: "49"
+        CFBundleShortVersionString: "1.11.1"
+        CFBundleVersion: "50"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
@@ -39,6 +39,12 @@ targets:
           - audio
           - fetch
         ITSAppUsesNonExemptEncryption: false
+        # 同步 NAS 走 WebDAV。局域网内用 http 直连时 ATS 会拦，
+        # NSAllowsLocalNetworking 只放开「本地网络」这一类（不含公网明文），
+        # 比 NSAllowsArbitraryLoads 安全得多。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: 局域网内直连 NAS 同步数据时需要访问本地网络。
         NSPhotoLibraryUsageDescription: 选择照片时会存在本机任务里，并在本机识别照片中的时间，用来快速建任务。
         NSCameraUsageDescription: 拍照会存在本机任务里，并在本机识别照片中的时间，用来快速建任务。
     settings:
@@ -47,5 +53,5 @@ targets:
         PRODUCT_NAME: Cuiban
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "49"
-        MARKETING_VERSION: "1.11.0"
+        CURRENT_PROJECT_VERSION: "50"
+        MARKETING_VERSION: "1.11.1"

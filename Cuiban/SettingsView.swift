@@ -388,7 +388,7 @@ struct SettingsView: View {
             NavigationView {
                 Form {
                     Section {
-                        TextField("http://192.168.1.10:5005/cuiban-sync", text: $davURL)
+                        TextField("https://8.133.219.183:5006/cuiban-sync", text: $davURL)
                             .font(.app(14))
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
@@ -403,7 +403,7 @@ struct SettingsView: View {
                     } header: {
                         Text("飞牛 WebDAV")
                     } footer: {
-                        Text("飞牛里「设置 → 文件服务 → WebDAV」打开后会给出地址和端口，默认 5005。地址填目录不用带文件名，App 会在下面放 cuiban-data.json。已做过 frp 映射的话把公网地址填进来即可。")
+                        Text("飞牛里「设置 → 文件服务 → WebDAV」打开后会给出地址和端口（http 默认 5005、https 默认 5006）。地址填目录不用带文件名，App 会在下面放 cuiban-data.json。自签名证书已经放行，frp 映射的公网地址直接填就行。")
                     }
 
                     Section {

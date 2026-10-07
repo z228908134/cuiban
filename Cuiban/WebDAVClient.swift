@@ -60,8 +60,40 @@ enum Keychain {
 // 同步的是一个文件（cuiban-data.json，照片已内嵌成 base64），
 // 所以只要实现 GET / PUT / MKCOL 三个动作就够了。
 
+/// 自签名证书放行。
+///
+/// 自建 NAS + frp 映射几乎一定用的是自签名证书（或者证书域名和 IP 对不上），
+/// ATS 和系统默认校验都会直接拒掉，表现为「此服务器的证书无效」。
+/// 用户明确要求不管证书，所以这里在 serverTrust 挑战里无条件放行。
+///
+/// 安全影响：这条链路不再防中间人。但数据只在自己的设备↔自己的 NAS 之间传，
+/// 且密码走的是 Basic（本来就不抗嗅探，除非套 https——这里已经放弃 https 的意义了）。
+/// 真要根治得在 NAS 上装一个与域名匹配的证书。
+private final class SelfSignedOKDelegate: NSObject, URLSessionDelegate {
+    func urlSession(_ session: URLSession,
+                    didReceive challenge: URLAuthenticationChallenge,
+                    completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let trust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
+        }
+        completionHandler(.useCredential, URLCredential(trust: trust))
+    }
+}
+
+/// 单例持有 delegate，URLSession 会强引用它，别让 session 一建完就被回收
+private final class SelfSignedSession {
+    static let shared = SelfSignedSession()
+    let delegate = SelfSignedOKDelegate()
+    let session: URLSession
+    private init() {
+        session = URLSession(configuration: .default)
+    }
+}
+
 struct WebDAVClient {
-    /// 形如 http://192.168.1.10:5005/cuiban-sync （结尾有没有斜杠都行）
+    /// 形如 https://8.133.219.183:5006/cuiban-sync 或 http://192.168.1.10:5005/xxx
     var baseURL: String
     var user: String
     var password: String
@@ -71,6 +103,7 @@ struct WebDAVClient {
         case badURL
         case http(Int, String)
         case empty
+        case tls(String)
 
         var errorDescription: String? {
             switch self {
@@ -84,6 +117,8 @@ struct WebDAVClient {
                 return "服务器返回 \(code)"
             case .empty:
                 return "没有读到内容"
+            case .tls(let m):
+                return "HTTPS 连不上：\(m)"
             }
         }
     }
@@ -111,16 +146,18 @@ struct WebDAVClient {
         req.httpMethod = method
         req.httpBody = body
         req.timeoutInterval = 25
-        // 手动拼 Basic 认证头：不去碰 URLSession 的认证 challenge delegate，
-        // 少一层和后台 session 冲突的坑
-        let cred = Data("\(user):\(password)".utf8).base64EncodedString()
-        req.setValue("Basic \(cred)", forHTTPHeaderField: "Authorization")
+        // Basic 认证头 + 自签名放行都要，所以走带 delegate 的 session，
+        // 但认证仍然手动拼头：省掉 challenge 反复重试（有些 NAS 会连着挑战 3 次）
+        if !user.isEmpty || !password.isEmpty {
+            let cred = Data("\(user):\(password)".utf8).base64EncodedString()
+            req.setValue("Basic \(cred)", forHTTPHeaderField: "Authorization")
+        }
 
         var outData: Data?
         var outResp: HTTPURLResponse?
         var outErr: Error?
         let sem = DispatchSemaphore(value: 0)
-        URLSession.shared.dataTask(with: req) { d, r, e in
+        SelfSignedSession.shared.session.dataTask(with: req) { d, r, e in
             outData = d
             outResp = r as? HTTPURLResponse
             outErr = e
@@ -128,7 +165,18 @@ struct WebDAVClient {
         }.resume()
         sem.wait()
 
-        if let e = outErr { throw e }
+        if let e = outErr {
+            let ns = e as NSError
+            // 证书类错误翻译成人能看懂的话；NSURLErrorServerCertificateUntrusted = -1202
+            if ns.domain == NSURLErrorDomain,
+               ns.code == NSURLErrorServerCertificateUntrusted
+                || ns.code == NSURLErrorServerCertificateHasBadDate
+                || ns.code == NSURLErrorServerCertificateHasUnknownRoot
+                || ns.code == NSURLErrorServerCertificateNotYetValid {
+                throw WebDAVError.tls(ns.localizedDescription)
+            }
+            throw e
+        }
         guard let resp = outResp else { throw WebDAVError.empty }
         // 2xx 都算成功（WebDAV 的 PUT 返回 201/204）
         guard (200...299).contains(resp.statusCode) else {
