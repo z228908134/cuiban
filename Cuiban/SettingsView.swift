@@ -29,15 +29,6 @@ struct SettingsView: View {
     @State private var restorePayload: BackupPayload? = nil
     @State private var restoreSource = ""
 
-    // MARK: WebDAV 直连 NAS
-
-    @State private var davSheet = false
-    @State private var davURL = ""
-    @State private var davUser = ""
-    @State private var davPass = ""
-    @State private var davNotice: String? = nil
-    @State private var davTesting = false
-
     struct ExportItem: Identifiable {
         let id = UUID()
         let url: URL
@@ -297,31 +288,31 @@ struct SettingsView: View {
             Button("停止同步", role: .destructive) {
    cloudConfirmDisable = true
   }
-        } else {
-        // 没开启时给两个并排入口：飞牛直连 / 系统文件夹
-      HStack(spacing: 12) {
- Button {
-        davSheet = true
-  } label: {
+} else {
+            // 没开启时给两个并排入口：飞牛直连（二级页）/ 系统文件夹
+         HStack(spacing: 12) {
+         NavigationLink {
+        WebDAVSettingsView()
+        } label: {
           VStack(spacing: 4) {
-        Image(systemName: "server.rack")
-        .font(.app(18))
-   Text("飞牛 WebDAV").font(.app(12))
+      Image(systemName: "server.rack")
+            .font(.app(18))
+            Text("飞牛 WebDAV").font(.app(12))
        }
             .frame(maxWidth: .infinity)
-  }
-       .buttonStyle(.bordered)
+        }
+      .buttonStyle(.bordered)
 
         Button {
-      syncFolderPicker = true
-         } label: {
+            syncFolderPicker = true
+        } label: {
       VStack(spacing: 4) {
-      Image(systemName: "folder")
-       .font(.app(18))
-      Text("系统文件夹").font(.app(12))
-            }
-      .frame(maxWidth: .infinity)
-   }
+       Image(systemName: "folder")
+           .font(.app(18))
+    Text("系统文件夹").font(.app(12))
+     }
+         .frame(maxWidth: .infinity)
+        }
             .buttonStyle(.bordered)
     }
         }
@@ -384,59 +375,7 @@ struct SettingsView: View {
                 handleFolderPicked(url)
             }
         }
-        .sheet(isPresented: $davSheet) {
-            NavigationView {
-                Form {
-                    Section {
-                        TextField("https://8.133.219.183:5006/cuiban-sync", text: $davURL)
-                            .font(.app(14))
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                            .keyboardType(.URL)
-                        TextField("用户名", text: $davUser)
-                            .font(.app(14))
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
-                        SecureField(CloudSync.webdavPassword.isEmpty ? "密码" : "密码（已保存，留空不改）",
-                                    text: $davPass)
-                            .font(.app(14))
-                    } header: {
-                        Text("飞牛 WebDAV")
-                    } footer: {
-                        Text("飞牛里「设置 → 文件服务 → WebDAV」打开后会给出地址和端口（http 默认 5005、https 默认 5006）。地址填目录不用带文件名，App 会在下面放 cuiban-data.json。自签名证书已经放行，frp 映射的公网地址直接填就行。")
-                    }
-
-                    Section {
-                        Button(davTesting ? "测试中…" : "测试连接") { testWebDAV() }
-                            .disabled(davTesting || davURL.isEmpty)
-
-                        if let n = davNotice {
-                            Text(n)
-                                .font(.app(12))
-                                .foregroundColor(n.hasPrefix("连接成功") ? .green : .orange)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                }
-                .navigationTitle("飞牛直连")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .navigationBarLeading) {
-                        Button("取消") {
-                            davSheet = false
-                            davNotice = nil
-                            davPass = ""
-                        }
-                    }
-                    ToolbarItem(placement: .navigationBarTrailing) {
-                        Button("保存并同步") { saveWebDAV() }
-                            .disabled(davURL.isEmpty)
-                    }
-                }
-            }
-            .navigationViewStyle(.stack)
-        }
-        .alert("用 NAS 上的数据覆盖本机？", isPresented: $cloudConfirmPull) {
+.alert("用 NAS 上的数据覆盖本机？", isPresented: $cloudConfirmPull) {
             Button("覆盖", role: .destructive) { doPullFromCloud() }
             Button("取消", role: .cancel) {}
         } message: {
@@ -456,6 +395,12 @@ struct SettingsView: View {
             store.refreshAuth()
             refreshPhotoStats()
             refreshBackupStats()
+        }
+        // 从「飞牛直连」二级页返回时刷新状态：那边保存成功后，
+        // 这边要立刻显示「飞牛已连接 + 地址」，否则要手动切页面才变
+        .onReceive(NotificationCenter.default.publisher(for: .cloudConfigChanged)) { _ in
+            cloudConfig = CloudSync.currentConfig
+            cloudMeta = CloudSync.currentMeta
         }
         .onReceive(Timer.publish(every: 4, on: .main, in: .common).autoconnect()) { _ in
             store.refreshPendingCount()
@@ -542,52 +487,13 @@ CloudSync.configure(folder: cloudConfig.folder,
             cloudNotice = "这个文件夹读不到（可能没连上 NAS，或没有写入权限）"
      return
         }
-        CloudSync.configure(folder: path,
-          includePhotos: cloudConfig.includePhotos,
-                            autoSync: cloudConfig.autoSync)
-        cloudConfig = CloudSync.currentConfig
-        // 立刻同步一次：远端有数据就拉下来，没有就把本机推上去
-        cloudNotice = CloudSync.syncAndReport()
- cloudMeta = CloudSync.currentMeta
-    }
-
-    // MARK: WebDAV（飞牛直连）
-
-    /// 测试连接：拿当前输入拼个临时客户端探一下
-    private func testWebDAV() {
-        davTesting = true
- davNotice = nil
-        let url = davURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let pass = davPass.isEmpty ? CloudSync.webdavPassword : davPass
-        DispatchQueue.global(qos: .userInitiated).async {
-       let cli = WebDAVClient(baseURL: url, user: davUser, password: pass)
-  let msg = cli.test()
-       DispatchQueue.main.async {
-    davTesting = false
-       davNotice = msg
-        }
-        }
-    }
-
-    /// 保存并立刻同步一次
-    private func saveWebDAV() {
-        let url = davURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !url.isEmpty else {
-            davNotice = "先填 NAS 地址"
-       return
-        }
-        let pass = davPass.isEmpty ? CloudSync.webdavPassword : davPass
- CloudSync.configureWebDAV(url: url,
-   user: davUser,
-     password: pass,
-    includePhotos: cloudConfig.includePhotos,
-    autoSync: true)
-        cloudConfig = CloudSync.currentConfig
-        davSheet = false
-        davNotice = nil
-    davPass = ""
+CloudSync.configure(folder: path,
+            includePhotos: cloudConfig.includePhotos,
+   autoSync: cloudConfig.autoSync)
+    cloudConfig = CloudSync.currentConfig
+    // 立刻同步一次：远端有数据就拉下来，没有就把本机推上去
     cloudNotice = CloudSync.syncAndReport()
-        cloudMeta = CloudSync.currentMeta
+ cloudMeta = CloudSync.currentMeta
     }
 
     // MARK: 备份相关
@@ -778,5 +684,120 @@ CloudSync.configure(folder: cloudConfig.folder,
                 }
             }
         )
+    }
+}
+
+// MARK: - 飞牛直连（WebDAV）
+//
+// 单独一个二级页：从设置里点「飞牛 WebDAV」进来，填地址 / 用户名 / 密码，
+// 测试连接通了再保存并同步一次。
+// 密码存在 Keychain，页面只显示「已保存」不回显——
+// 免签名 App 拿不到 Keychain 访问组，但同 App 内自己读没问题。
+
+struct WebDAVSettingsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @EnvironmentObject var store: TaskStore
+
+    @State private var url = ""
+    @State private var user = ""
+    @State private var pass = ""
+    @State private var notice: String? = nil
+    @State private var testing = false
+    @State private var saving = false
+
+    /// 已保存过密码时，SecureField 显示占位说明而不是空白（留空 = 不改）
+    private var passPlaceholder: String {
+        CloudSync.webdavPassword.isEmpty ? "密码" : "已保存，留空则不改"
+    }
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("https://8.133.219.183:5006/cuiban-sync", text: $url)
+                    .font(.app(14))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .keyboardType(.URL)
+                TextField("用户名", text: $user)
+                    .font(.app(14))
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                SecureField(passPlaceholder, text: $pass)
+                    .font(.app(14))
+            } header: {
+                Text("飞牛 WebDAV")
+            } footer: {
+                Text("飞牛里「设置 → 文件服务 → WebDAV」打开后会给出地址和端口（http 默认 5005、https 默认 5006）。地址填到目录就行，不用带文件名，App 会在下面放 cuiban-data.json。自签名证书已经放行，frp 映射的公网地址直接填。")
+            }
+
+            Section {
+                Button(testing ? "测试中…" : "测试连接") { runTest() }
+                    .disabled(testing || saving || url.isEmpty)
+
+                Button(saving ? "连接中…" : "保存并同步") { save() }
+                    .disabled(saving || url.isEmpty)
+
+                if let n = notice {
+                    Text(n)
+                        .font(.app(12))
+                        .foregroundColor(n.hasPrefix("连接成功") ? .green : .orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } footer: {
+                Text("保存后会立刻同步一次：NAS 上有数据就拉下来，没有就把本机数据推上去。")
+            }
+        }
+        .navigationTitle("飞牛直连")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            let c = CloudSync.currentConfig
+            if url.isEmpty {
+                url = c.mode == "webdav" ? c.webdavURL : ""
+                user = c.mode == "webdav" ? c.webdavUser : ""
+            }
+        }
+    }
+
+    /// 用当前输入拼一个临时客户端探一下，不落配置
+    private func runTest() {
+        testing = true
+        notice = nil
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        let p = pass.isEmpty ? CloudSync.webdavPassword : pass
+        let usr = user
+        DispatchQueue.global(qos: .userInitiated).async {
+            let msg = WebDAVClient(baseURL: u, user: usr, password: p).test()
+            DispatchQueue.main.async {
+                testing = false
+                notice = msg
+            }
+        }
+    }
+
+    private func save() {
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !u.isEmpty else { notice = "先填 NAS 地址"; return }
+        let p = pass.isEmpty ? CloudSync.webdavPassword : pass
+        saving = true
+        notice = nil
+        let includePhotos = store.settings.backupIncludePhotos
+        DispatchQueue.global(qos: .userInitiated).async {
+            CloudSync.configureWebDAV(url: u, user: user, password: p,
+                                      includePhotos: includePhotos, autoSync: true)
+            // 先探一次，地址填错就别把「已连接」显示出来
+            let probe = WebDAVClient(baseURL: u, user: user, password: p).test()
+            let synced = probe.hasPrefix("连接成功")
+                ? CloudSync.syncAndReport()
+                : probe
+            DispatchQueue.main.async {
+                saving = false
+                notice = synced
+                if synced.hasPrefix("连接成功") || synced.contains("已上传")
+                    || synced.contains("已经一致") {
+                    pass = ""
+                    dismiss()
+                }
+            }
+        }
     }
 }

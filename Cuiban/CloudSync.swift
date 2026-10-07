@@ -6,6 +6,9 @@ import Foundation
 // 这样不必在每个页面里都塞同步调用，也不漏「某条路径忘了同步」。
 extension Notification.Name {
     static let cuibanDataChanged = Notification.Name("cuiban.dataChanged")
+    /// 同步目标（文件夹 / WebDAV）配置变了。设置页监听它刷新「已连接」状态——
+    /// 配置是在二级页里改的，主页面收不到任何 SwiftUI 状态变化通知。
+    static let cloudConfigChanged = Notification.Name("cuiban.cloudConfigChanged")
 }
 
 // MARK: - 与 NAS / 文件夹同步
@@ -64,7 +67,7 @@ enum CloudSync {
         var lastAction: String = ""
     }
 
-    private static var config: Config {
+private static var config: Config {
         get {
             guard let d = UserDefaults.standard.data(forKey: defaultsKey) else { return Config() }
             return (try? JSONDecoder().decode(Config.self, from: d)) ?? Config()
@@ -72,6 +75,7 @@ enum CloudSync {
         set {
             if let d = try? JSONEncoder().encode(newValue) {
                 UserDefaults.standard.set(d, forKey: defaultsKey)
+NotificationCenter.default.post(name: .cloudConfigChanged, object: nil)
             }
         }
     }
