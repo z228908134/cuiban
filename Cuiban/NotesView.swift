@@ -641,7 +641,7 @@ struct NoteBodyEditor: UIViewRepresentable {
                 rects.append(tv.caretRect(for: p0))
                 if markLen > 0,
                    let p1 = tv.position(from: tv.beginningOfDocument, offset: markLoc + markLen),
-                   let r = tv.range(from: p0, to: p1) {
+                   let r = tv.textRange(from: p0, to: p1) {
                     let fr = tv.firstRect(for: r)
                     if fr.width > 0 || fr.height > 0 { rects.append(fr) }
                 }
