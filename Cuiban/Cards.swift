@@ -47,11 +47,10 @@ struct CardItem: Identifiable, Codable, Equatable {
     }
 
     /// 列表副标题：类型 银行 备注
+    /// 列表行副标题：只放类型。
+    /// 银行已经单独作为标题显示，备注也有自己的小标签，这里不再重复拼一遍
     var subtitle: String {
-        var parts: [String] = [type.label]
-        if !bank.isEmpty { parts.append(bank) }
-        if !note.isEmpty { parts.append(note) }
-        return parts.joined(separator: " ")
+        type.label
     }
 
     /// 编辑页的「图片」入口标题

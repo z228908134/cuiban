@@ -53,7 +53,9 @@ struct TaskListView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("催办")
+            .navigationTitle("催办清单")
+            // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
+            .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottomTrailing) {
                 FabButton { showingAdd = true }
                     .padding(.trailing, 20)
