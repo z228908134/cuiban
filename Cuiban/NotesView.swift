@@ -529,17 +529,17 @@ struct NoteBodyEditor: UIViewRepresentable {
             let line = cns.substring(with: lr)
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-            // 勾选框：直接用「☐ / ☑」字符本体（滴答清单同款细描边空心方框），
-            // 不再叠加绘制的附件图片——两层叠在一起会又脏又难看。
-            // 方框比正文大一号（更好看也好点），颜色略浅；勾上后随整行一起变浅。
+            // 勾选框：在行首标记上盖一个画出来的方框（滴答同款细描边空心方框）。
+            // 标记本身用 ☐/☑ 字符——万一附件没挂上，用户看到的也是一个方框字符，不会是空白；
+            // 字符只作兜底，视觉大小由附件决定（☐ 字形只有字号 40%，太小）。
             let info = TextEditBridge.markInfo(in: line)
             if let info = info, info.markLen > 0 {
-                attr.addAttributes([
-                    .font: UIFont.systemFont(ofSize: 19),
-                    .foregroundColor: info.checked
-                        ? UIColor.tertiaryLabel
-                        : UIColor.label.withAlphaComponent(0.82)
-                ], range: NSRange(location: lr.location + info.loc, length: info.markLen))
+                let att = NSTextAttachment()
+                att.image = info.checked ? CheckboxArt.checked : CheckboxArt.unchecked
+                att.bounds = CGRect(x: 0, y: -4, width: CheckboxArt.size.width,
+                                    height: CheckboxArt.size.height)
+                attr.addAttribute(.attachment, value: att,
+                                  range: NSRange(location: lr.location + info.loc, length: info.markLen))
             }
 
             if let info = info, info.checked {
@@ -663,11 +663,11 @@ struct NoteBodyEditor: UIViewRepresentable {
                     let markLoc = lr.location + info.loc
                     if let pos = tv.position(from: tv.beginningOfDocument, offset: markLoc) {
                         let cr = tv.caretRect(for: pos)
-                        // 方框 19pt 但手指很难点准：热区左右大幅放宽、纵向也加高
-                        let hot = CGRect(x: cr.minX - 14,
-                                         y: cr.minY - 6,
-                                         width: 22 + CGFloat(info.markLen) * 16,
-                                         height: cr.height + 14)
+                        // 方框 21pt 仍然不好点：热区左右各放宽一截，覆盖整个方框 + 后面的空格
+                        let hot = CGRect(x: cr.minX - 16,
+                                         y: cr.minY - 8,
+                                         width: 30 + CGFloat(info.markLen) * 18,
+                                         height: cr.height + 16)
                         if hot.contains(point) {
                             consider(lr, markLoc, info.markLen, info.checked, hot)
                         }
@@ -744,6 +744,47 @@ final class CheckboxTextView: UITextView {
             return nil
         }
         return super.hitTest(point, with: event)
+    }
+}
+
+// MARK: - 勾选框图形
+
+/// 画出来的勾选框（滴答清单式细描边空心方框）。
+/// 为什么不用 ☐ 字符直接显示：那个字形只有字号的 ~40%，19pt 下来实际只有 8pt，
+/// 太小、也太难点。自己画能精确控制大小和粗细。
+/// 文字里存的仍然是 ☐/☑ 字符（万一附件没挂上，也能看到方框而不是空白）。
+enum CheckboxArt {
+    /// 21pt 画布、19pt 方框，比正文（16pt）还大一点，好看也好点
+    static let size = CGSize(width: 21, height: 21)
+    static let checked = image(checked: true)
+    static let unchecked = image(checked: false)
+
+    static func image(checked: Bool) -> UIImage {
+        UIGraphicsImageRenderer(size: size).image { _ in
+            let rect = CGRect(x: 1.5, y: 1.5, width: 18, height: 18)
+            let box = UIBezierPath(roundedRect: rect, cornerRadius: 4.5)
+            if checked {
+                // 勾过的：框线浅一点，勾子深一点，整行随之变灰
+                UIColor.label.withAlphaComponent(0.34).setStroke()
+                box.lineWidth = 1.4
+                box.stroke()
+
+                let mark = UIBezierPath()
+                mark.move(to: CGPoint(x: 5.4, y: 10.6))
+                mark.addLine(to: CGPoint(x: 8.4, y: 13.6))
+                mark.addLine(to: CGPoint(x: 15.6, y: 6.4))
+                mark.lineWidth = 2.1
+                mark.lineCapStyle = .round
+                mark.lineJoinStyle = .round
+                UIColor.label.withAlphaComponent(0.55).setStroke()
+                mark.stroke()
+            } else {
+                // 未勾选：清晰的深灰细描边空心方框
+                UIColor.label.withAlphaComponent(0.62).setStroke()
+                box.lineWidth = 1.7
+                box.stroke()
+            }
+        }
     }
 }
 
