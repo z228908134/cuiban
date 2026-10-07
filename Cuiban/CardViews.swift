@@ -184,6 +184,9 @@ struct CardListView: View {
     }
 
     // MARK: 列表
+    //
+    // 用 List + 系统 swipeActions 做左滑：手势、按钮点击、收起全交给系统，
+    // 自绘那套（ZStack 底��铺按钮）会被上层滑动内容挡住点击，已经放弃。
 
     @ViewBuilder
     private var listBody: some View {
@@ -201,21 +204,27 @@ struct CardListView: View {
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ScrollView {
-                LazyVStack(spacing: 10) {
-                    ForEach(list) { c in
-                        // 左滑露出「编辑 / 删除」，和系统列表的左滑一致
-                        CardSwipeRow(
-                            onTap: { detail = c },
-                            onEdit: { editing = c },
-                            onDelete: {
+            List {
+                ForEach(list) { c in
+                    CardRow(card: c)
+                        .contentShape(Rectangle())
+                        .onTapGesture { detail = c }
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button {
+                                editing = c
+                            } label: {
+                                Label("编辑", systemImage: "square.and.pencil")
+                            }
+                            .tint(.blue)
+
+                            Button(role: .destructive) {
                                 alertInfo = AlertInfo(
                                     title: "删除这张卡片？",
                                     message: c.displayName,
                                     okTitle: "删除") { store.delete(id: c.id) }
+                            } label: {
+                                Label("删除", systemImage: "trash")
                             }
-                        ) {
-                            CardRow(card: c)
                         }
                         .contextMenu {
                             // 长按只做「复制」，编辑和删除走左滑
@@ -228,11 +237,16 @@ struct CardListView: View {
                                 toast = "已复制这张卡片的全部信息"
                             } label: { Label("复制全部", systemImage: "doc.on.clipboard") }
                         }
-                    }
+                        .listRowInsets(EdgeInsets(top: 5, leading: 14, bottom: 5, trailing: 14))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 12)
             }
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(Color(UIColor.systemGroupedBackground))
         }
     }
 }
@@ -273,109 +287,6 @@ struct CardRow: View {
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color(UIColor.secondarySystemGroupedBackground))
         )
-    }
-}
-
-// MARK: - 卡片左滑操作行
-
-/// ScrollView 里没有系统 swipeActions，自绘一个：左滑露出「编辑 / 删除」，
-/// 再滑回或点其它地方收起。行为对齐系统列表的左滑。
-struct CardSwipeRow<Content: View>: View {
-    var onTap: () -> Void
-    var onEdit: () -> Void
-    var onDelete: () -> Void
-    @ViewBuilder var content: () -> Content
-
-    @State private var revealed = false
-    @State private var isDragging = false
-    @State private var dragX: CGFloat = 0
-    private let revealWidth: CGFloat = 140
-
-    var body: some View {
-        ZStack(alignment: .trailing) {
-            HStack(spacing: 0) {
-                Button {
-                    close()
-                    onEdit()
-                } label: {
-                    op(icon: "pencil", title: "编辑",
-                       color: Color(red: 0.0, green: 0.48, blue: 1.0))
-                        .frame(width: 70)
-                }
-                .buttonStyle(.plain)
-                Button {
-                    close()
-                    onDelete()
-                } label: {
-                    op(icon: "trash", title: "删除", color: .red)
-                        .frame(width: 70)
-                }
-                .buttonStyle(.plain)
-            }
-            content()
-                // 底色必须和卡片本身一致（卡片是 secondarySystemGroupedBackground）。
-                // 这里如果用 systemBackground（白），滑动位移过程中就会从圆角边缘露出白底，看起来「闪一下」
-                .background(Color(UIColor.secondarySystemGroupedBackground))
-                .offset(x: offset)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    if revealed { close() } else { onTap() }
-                }
-                .gesture(swipe)
-        }
-        .clipShape(RoundedRectangle(cornerRadius: 14))
-        .contentShape(Rectangle())
-    }
-
-    private var offset: CGFloat {
-        let base: CGFloat = revealed ? -revealWidth : 0
-        // 正在拖拽：基准位置 + 本次位移。松手时 revealed 与 dragX 在同一个动画里归位，
-        // 不会出现「先瞬移回原位再滑过去」的跳帧闪烁。
-        return min(0, max(-revealWidth - 40, base + dragX))
-    }
-
-    private func close() {
-        withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
-            revealed = false
-            dragX = 0
-        }
-    }
-
-    private var swipe: some Gesture {
-        DragGesture(minimumDistance: 18)
-            .onChanged { v in
-                // 竖向滑动留给 ScrollView，横向为主时才接管
-                guard abs(v.translation.width) > abs(v.translation.height) else { return }
-                if !isDragging {
-                    isDragging = true
-                    // 接管时把当前位移一次性吃掉，避免和基准位置叠加
-                    dragX = revealed ? v.translation.width + revealWidth : v.translation.width
-                    return
-                }
-                dragX = revealed ? v.translation.width + revealWidth : v.translation.width
-            }
-            .onEnded { v in
-                guard isDragging else { return }
-                isDragging = false
-                let target = (revealed ? -revealWidth : 0) + v.translation.width
-                let shouldOpen = target < -revealWidth / 2
-                withAnimation(.spring(response: 0.32, dampingFraction: 0.9)) {
-                    revealed = shouldOpen
-                    dragX = 0
-                }
-            }
-    }
-
-    private func op(icon: String, title: String, color: Color) -> some View {
-        VStack(spacing: 4) {
-            Image(systemName: icon)
-                .font(.app(15, weight: .medium))
-            Text(title)
-                .font(.app(11, weight: .medium))
-        }
-        .foregroundColor(.white)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(color)
     }
 }
 
