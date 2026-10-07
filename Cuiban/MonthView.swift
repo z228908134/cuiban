@@ -79,7 +79,7 @@ struct MonthView: View {
         HStack {
             Button { shift(-1) } label: {
                 Image(systemName: "chevron.left")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.app(15, weight: .medium))
                     .foregroundColor(.primary.opacity(0.7))
                     .frame(width: 40, height: 38)
             }
@@ -90,13 +90,13 @@ struct MonthView: View {
             Text(collapsed
                  ? fmt(selected, "yyyy 年 M 月")
                  : fmt(anchor, "yyyy 年 M 月"))
-                .font(.system(size: 17, weight: .semibold))
+                .font(.app(17, weight: .semibold))
 
             Spacer()
 
             Button { shift(1) } label: {
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.app(15, weight: .medium))
                     .foregroundColor(.primary.opacity(0.7))
                     .frame(width: 40, height: 38)
             }
@@ -111,7 +111,7 @@ struct MonthView: View {
         HStack(spacing: 0) {
             ForEach(weekNames, id: \.self) { n in
                 Text(n)
-                    .font(.system(size: 12))
+                    .font(.app(12))
                     .foregroundColor(.secondary.opacity(0.85))
                     .frame(maxWidth: .infinity)
             }
@@ -131,7 +131,7 @@ struct MonthView: View {
                 }
             } label: {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.app(12, weight: .medium))
                     .foregroundColor(.secondary)
                     .frame(maxWidth: .infinity)
                     .frame(height: 24)
@@ -211,7 +211,7 @@ struct MonthView: View {
             VStack(spacing: 1) {
                 ZStack(alignment: .topTrailing) {
                     Text("\(cal.component(.day, from: d))")
-                        .font(.system(size: 17, weight: isSelected || isToday ? .semibold : .regular))
+                        .font(.app(17, weight: isSelected || isToday ? .semibold : .regular))
                         .foregroundColor(dimmed ? numberColor.opacity(0.35) : numberColor)
                         .frame(width: 30, height: 30)
                         .background(
@@ -222,7 +222,7 @@ struct MonthView: View {
 
                     if let b = badge {
                         Text(b)
-                            .font(.system(size: 7.5, weight: .bold))
+                            .font(.app(7.5, weight: .bold))
                             .foregroundColor(.white)
                             .frame(width: 12, height: 12)
                             .background(RoundedRectangle(cornerRadius: 3).fill(
@@ -233,7 +233,7 @@ struct MonthView: View {
                 }
 
                 Text(subText)
-                    .font(.system(size: 9))
+                    .font(.app(9))
                     .foregroundColor(dimmed ? subColor.opacity(0.4) : subColor)
                     .lineLimit(1)
 
@@ -286,10 +286,10 @@ struct MonthView: View {
                 } else {
                     HStack {
                         Text(fmt(selected, "M月d日 EEEE"))
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.app(15, weight: .semibold))
                         Spacer()
                         Text("\(items.count) 个任务")
-                            .font(.system(size: 12))
+                            .font(.app(12))
                             .foregroundColor(.secondary)
                     }
                     .padding(.horizontal, 16)
@@ -329,7 +329,7 @@ struct MonthView: View {
                         .frame(width: 112, height: 74)
                         .overlay(
                             Image(systemName: "checkmark.circle")
-                                .font(.system(size: 20))
+                                .font(.app(20))
                                 .foregroundColor(brandColor)
                         )
                         .shadow(color: .black.opacity(0.07), radius: 7, y: 4)
@@ -337,9 +337,9 @@ struct MonthView: View {
                 .offset(y: -4)
             }
             Text("你这一天没有任务")
-                .font(.system(size: 16, weight: .medium))
+                .font(.app(16, weight: .medium))
             Text("放松一下吧")
-                .font(.system(size: 13))
+                .font(.app(13))
                 .foregroundColor(.secondary)
         }
     }
@@ -354,7 +354,7 @@ struct MonthView: View {
                 }
             } label: {
                 Image(systemName: e.task.isDone ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 21))
+                    .font(.app(21))
                     .foregroundColor(e.task.isDone ? .green : (e.task.isOverdue && !e.projected ? .red : .secondary))
             }
             .buttonStyle(.plain)
@@ -362,7 +362,7 @@ struct MonthView: View {
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(e.task.title.isEmpty ? "（未命名）" : e.task.title)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.app(15, weight: .semibold))
                     .foregroundColor(e.task.isDone ? .secondary : .primary)
                     .strikethrough(e.task.isDone)
 
@@ -375,14 +375,14 @@ struct MonthView: View {
                         Text("已逾期").foregroundColor(.red)
                     }
                 }
-                .font(.system(size: 11))
+                .font(.app(11))
                 .foregroundColor(.secondary)
             }
 
             Spacer(minLength: 4)
 
             Image(systemName: "chevron.right")
-                .font(.system(size: 12))
+                .font(.app(12))
                 .foregroundColor(.secondary.opacity(0.6))
         }
         .padding(.horizontal, 16)
@@ -559,9 +559,9 @@ private struct SwipeableRow<Content: View>: View {
     private func op(icon: String, title: String, color: Color) -> some View {
         VStack(spacing: 4) {
             Image(systemName: icon)
-                .font(.system(size: 15, weight: .medium))
+                .font(.app(15, weight: .medium))
             Text(title)
-                .font(.system(size: 11, weight: .medium))
+                .font(.app(11, weight: .medium))
         }
         .foregroundColor(.white)
         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -3,6 +3,12 @@ import SwiftUI
 struct SettingsView: View {
     @EnvironmentObject var store: TaskStore
     @ObservedObject private var ai = AIStore.shared
+    @ObservedObject private var fontScale = FontScale.shared
+
+    /// 预览里的未勾选方框（和笔记编辑器一致）
+    private var uncheckedMarkForPreview: String {
+        TextEditBridge.uncheckedMarkRaw
+    }
 
     /// 版本号从 Info.plist 动态读取，升级后自动跟随
     private static let appVersion =
@@ -43,6 +49,81 @@ struct SettingsView: View {
                         }
                     }
                     .pickerStyle(.segmented)
+                }
+
+                // MARK: 字体大小
+
+                Section(header: Text("字体大小"),
+                        footer: Text("整个 App 的字都会跟着一起变大变小，包括清单、日历、笔记和卡片。")) {
+                    // 四档预设
+                    HStack(spacing: 8) {
+                        ForEach(FontScale.presets, id: \.value) { p in
+                            let active = abs(fontScale.value - p.value) < 0.02
+                            Button {
+                                setFontScale(p.value)
+                            } label: {
+                                Text(p.label)
+                                    .font(.app(14, weight: active ? .semibold : .regular))
+                                    .foregroundColor(active ? .white : .primary)
+                                    .frame(maxWidth: .infinity)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(active ? brandColor : Color.primary.opacity(0.07))
+                                    )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+
+                    // 连续调节
+                    HStack(spacing: 10) {
+                        Text("A")
+                            .font(.app(12))
+                            .foregroundColor(.secondary)
+                        Slider(value: Binding(
+                            get: { fontScale.value },
+                            set: { setFontScale($0) }
+                        ),
+                               in: FontScale.range,
+                               step: 0.02)
+                            .tint(brandColor)
+                        Text("A")
+                            .font(.app(19, weight: .semibold))
+                    }
+
+                    HStack {
+                        Text("当前：\(fontScale.currentPresetLabel) · \(fontScale.percentText)")
+                            .font(.app(12))
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+
+                    // 实时预览
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("预览")
+                            .font(.app(11))
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 9) {
+                            Image(systemName: "circle")
+                                .font(.app(20))
+                                .foregroundColor(brandColor)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("明天下午 3 点开会")
+                                    .font(.app(16, weight: .semibold))
+                                Text("还有 4 小时 · 重复：工作日")
+                                    .font(.app(12))
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        HStack(spacing: 9) {
+                            Text(uncheckedMarkForPreview)
+                                .font(.app(20))
+                            Text("库房盘点")
+                                .font(.app(15))
+                        }
+                    }
+                    .padding(.vertical, 6)
                 }
 
                 // MARK: 通知权限
@@ -110,7 +191,7 @@ struct SettingsView: View {
 
                         if let p = AIProvider.all.first(where: { $0.id == ai.providerId }), !p.applyHint.isEmpty {
                             Text(p.applyHint)
-                                .font(.system(size: 12))
+                                .font(.app(12))
                                 .foregroundColor(.secondary)
                         }
 
@@ -118,17 +199,17 @@ struct SettingsView: View {
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
                             .keyboardType(.URL)
-                            .font(.system(size: 14))
+                            .font(.app(14))
 
                         TextField("模型名", text: $ai.model)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
-                            .font(.system(size: 14))
+                            .font(.app(14))
 
                         SecureField("API Key", text: $ai.apiKey)
                             .autocapitalization(.none)
                             .disableAutocorrection(true)
-                            .font(.system(size: 14))
+                            .font(.app(14))
 
                         Button(aiTesting ? "测试中…" : "测试一下配置") {
                             runAITest()
@@ -137,7 +218,7 @@ struct SettingsView: View {
 
                         if let r = aiTestResult {
                             Text(r)
-                                .font(.system(size: 12))
+                                .font(.app(12))
                                 .foregroundColor(r.hasPrefix("可用") ? .green : .red)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -162,7 +243,7 @@ struct SettingsView: View {
                     .foregroundColor(.orange)
                     if let n = photoNotice {
                         Text(n)
-                            .font(.system(size: 12))
+                            .font(.app(12))
                             .foregroundColor(.secondary)
                     }
                 }
@@ -179,7 +260,7 @@ struct SettingsView: View {
                         Spacer()
                         Text(backupSummaryText)
                             .foregroundColor(.secondary)
-                            .font(.system(size: 13))
+                            .font(.app(13))
                     }
 
                     Button("立即备份一份") { doBackupNow() }
@@ -197,7 +278,7 @@ struct SettingsView: View {
                             HStack {
                                 Text("从本地备份恢复…")
                                 Image(systemName: "chevron.up.chevron.down")
-                                    .font(.system(size: 11))
+                                    .font(.app(11))
                                     .foregroundColor(.secondary)
                             }
                         }
@@ -205,7 +286,7 @@ struct SettingsView: View {
 
                     if let n = backupNotice {
                         Text(n)
-                            .font(.system(size: 12))
+                            .font(.app(12))
                             .foregroundColor(.secondary)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -222,7 +303,7 @@ struct SettingsView: View {
                             Label("卡片备份", systemImage: "creditcard")
                             Spacer()
                             Text("\(CardStore.shared.cards.count) 张")
-                                .font(.system(size: 13))
+                                .font(.app(13))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -290,6 +371,14 @@ struct SettingsView: View {
     }
 
     // MARK: 备份相关
+
+    /// 改字号：更新全局系数 + 记进设置（备份/恢复才带得走）
+    private func setFontScale(_ v: Double) {
+        fontScale.value = v
+        var s = store.settings
+        s.fontScale = fontScale.value
+        store.updateSettingsPublic(s)
+    }
 
     private var backupSummaryText: String {
         if backupList.isEmpty { return "暂无" }
@@ -409,7 +498,7 @@ struct SettingsView: View {
     }
 
     private func tip(_ s: String) -> some View {
-        Text(s).font(.system(size: 13)).foregroundColor(.secondary)
+        Text(s).font(.app(13)).foregroundColor(.secondary)
     }
 
     private var themeBinding: Binding<ThemeMode> {

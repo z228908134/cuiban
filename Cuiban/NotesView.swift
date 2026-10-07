@@ -73,12 +73,12 @@ struct NotesView: View {
     private var emptyHint: some View {
         VStack(spacing: 8) {
             Image(systemName: "note.text")
-                .font(.system(size: 34))
+                .font(.app(34))
                 .foregroundColor(.secondary)
             Text("还没有笔记")
-                .font(.system(size: 15, weight: .medium))
+                .font(.app(15, weight: .medium))
             Text("点右下角 + 记一条，想法、备忘都能写")
-                .font(.system(size: 12))
+                .font(.app(12))
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -90,22 +90,22 @@ struct NotesView: View {
         } label: {
             VStack(alignment: .leading, spacing: 4) {
                 Text(n.displayTitle)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.app(16, weight: .semibold))
                     .foregroundColor(.primary)
                     .lineLimit(1)
 
                 Text(n.snippet)
-                    .font(.system(size: 13))
+                    .font(.app(13))
                     .foregroundColor(.secondary)
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
                     Text(fmt(n.updatedAt, "M月d日 HH:mm"))
-                        .font(.system(size: 11))
+                        .font(.app(11))
                         .foregroundColor(.secondary.opacity(0.8))
                     if !n.photos.isEmpty {
                         Image(systemName: "photo.on.rectangle")
-                            .font(.system(size: 10))
+                            .font(.app(10))
                             .foregroundColor(.secondary.opacity(0.8))
                     }
                     Spacer()
@@ -158,7 +158,7 @@ struct NoteEditorView: View {
         NavigationView {
             VStack(spacing: 0) {
                 TextField("笔记标题", text: $title)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.app(20, weight: .semibold))
                     .padding(.horizontal, 16)
                     .padding(.top, 12)
                     .padding(.bottom, 8)
@@ -186,7 +186,7 @@ struct NoteEditorView: View {
                         showTemplates = true
                     } label: {
                         Text("使用模板")
-                            .font(.system(size: 14))
+                            .font(.app(14))
                     }
                 }
             }
@@ -216,7 +216,7 @@ struct NoteEditorView: View {
             if bodyText.isEmpty {
                 // 纯展示的占位（不拦点击，点它也能唤起键盘）
                 Text("记录你的想法，或使用模板")
-                    .font(.system(size: 16))
+                    .font(.app(16))
                     .foregroundColor(.secondary)
                     .padding(.top, 10)
                     .padding(.leading, 18)
@@ -277,7 +277,7 @@ struct NoteEditorView: View {
             Button { hideKeyboard() } label: { Label("收起键盘", systemImage: "keyboard.chevron.compact.down") }
         } label: {
             Image(systemName: "chevron.down")
-                .font(.system(size: 13, weight: .medium))
+                .font(.app(13, weight: .medium))
                 .foregroundColor(.primary.opacity(0.8))
                 .frame(maxWidth: .infinity, minHeight: 40)
         }
@@ -292,7 +292,7 @@ struct NoteEditorView: View {
     private func barIcon(_ system: String, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: system)
-                .font(.system(size: 17, weight: active ? .semibold : .regular))
+                .font(.app(17, weight: active ? .semibold : .regular))
                 .foregroundColor(active ? .accentColor : .primary.opacity(0.8))
                 .frame(maxWidth: .infinity, minHeight: 40)
         }
@@ -302,7 +302,7 @@ struct NoteEditorView: View {
     private func barText(_ s: String, strike: Bool = false, active: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(s)
-                .font(.system(size: 15, weight: active ? .bold : .semibold))
+                .font(.app(15, weight: active ? .bold : .semibold))
                 .strikethrough(strike)
                 .foregroundColor(active ? .accentColor : .primary.opacity(0.8))
                 .frame(maxWidth: .infinity, minHeight: 40)
@@ -327,7 +327,7 @@ struct NoteEditorView: View {
                                 photos.remove(at: i)
                             } label: {
                                 Image(systemName: "xmark.circle.fill")
-                                    .font(.system(size: 16))
+                                    .font(.app(16))
                                     .foregroundColor(.white)
                                     .background(Circle().fill(Color.black.opacity(0.5)))
                             }
@@ -411,7 +411,9 @@ struct NoteBodyEditor: UIViewRepresentable {
     @Binding var activeTraits: Set<String>
     var bridge: TextEditBridge
 
-    static let baseFont = UIFont.systemFont(ofSize: 16)
+    /// 正文基准字号。用计算属性而不是 static let：字号设置改了之后要立刻生效，
+    /// 缓存住就再也变不回来了
+    static var baseFont: UIFont { UIFont.app(16) }
 
     func makeUIView(context: Context) -> UITextView {
         let tv = CheckboxTextView()
@@ -536,7 +538,8 @@ struct NoteBodyEditor: UIViewRepresentable {
             if let info = info, info.markLen > 0 {
                 let att = NSTextAttachment()
                 att.image = info.checked ? CheckboxArt.checked : CheckboxArt.unchecked
-                att.bounds = CGRect(x: 0, y: -4, width: CheckboxArt.size.width,
+                att.bounds = CGRect(x: 0, y: -4 * FontScale.current,
+                                    width: CheckboxArt.size.width,
                                     height: CheckboxArt.size.height)
                 attr.addAttribute(.attachment, value: att,
                                   range: NSRange(location: lr.location + info.loc, length: info.markLen))
@@ -559,7 +562,7 @@ struct NoteBodyEditor: UIViewRepresentable {
             } else if info == nil, trimmed.hasPrefix("# ") {
                 attr.addAttribute(
                     .font,
-                    value: UIFont.systemFont(ofSize: 19, weight: .semibold),
+                    value: UIFont.app(19, weight: .semibold),
                     range: NSRange(location: lr.location, length: max(lr.length - 1, 0))
                 )
             } else if trimmed.hasPrefix("> ") {
@@ -763,26 +766,31 @@ final class CheckboxTextView: UITextView {
 /// 太小、也太难点。自己画能精确控制大小和粗细。
 /// 文字里存的仍然是 ☐/☑ 字符（万一附件没挂上，也能看到方框而不是空白）。
 enum CheckboxArt {
-    /// 32pt 画布、28pt 方框，比正文（16pt）大一大圈，好看也好点
-    static let size = CGSize(width: 32, height: 32)
-    static let checked = image(checked: true)
-    static let unchecked = image(checked: false)
+    /// 32pt 画布、28pt 方框（按全局字号缩放），比正文大一大圈，好看也好点
+    static var size: CGSize {
+        let k = FontScale.current
+        return CGSize(width: 32 * k, height: 32 * k)
+    }
+    static var checked: UIImage { image(checked: true) }
+    static var unchecked: UIImage { image(checked: false) }
 
     static func image(checked: Bool) -> UIImage {
-        UIGraphicsImageRenderer(size: size).image { _ in
-            let rect = CGRect(x: 2.5, y: 2.5, width: 27, height: 27)
-            let box = UIBezierPath(roundedRect: rect, cornerRadius: 6.5)
+        let k = FontScale.current
+        let s = 32 * k
+        return UIGraphicsImageRenderer(size: CGSize(width: s, height: s)).image { _ in
+            let rect = CGRect(x: 2.5 * k, y: 2.5 * k, width: 27 * k, height: 27 * k)
+            let box = UIBezierPath(roundedRect: rect, cornerRadius: 6.5 * k)
             if checked {
                 // 勾过的：框线浅一点，勾子深一点，整行随之变灰
                 UIColor.label.withAlphaComponent(0.34).setStroke()
-                box.lineWidth = 1.8
+                box.lineWidth = 1.8 * k
                 box.stroke()
 
                 let mark = UIBezierPath()
-                mark.move(to: CGPoint(x: 8.4, y: 16.4))
-                mark.addLine(to: CGPoint(x: 13.2, y: 21.2))
-                mark.addLine(to: CGPoint(x: 23.6, y: 9.6))
-                mark.lineWidth = 2.8
+                mark.move(to: CGPoint(x: 8.4 * k, y: 16.4 * k))
+                mark.addLine(to: CGPoint(x: 13.2 * k, y: 21.2 * k))
+                mark.addLine(to: CGPoint(x: 23.6 * k, y: 9.6 * k))
+                mark.lineWidth = 2.8 * k
                 mark.lineCapStyle = .round
                 mark.lineJoinStyle = .round
                 UIColor.label.withAlphaComponent(0.55).setStroke()
@@ -790,7 +798,7 @@ enum CheckboxArt {
             } else {
                 // 未勾选：清晰的深灰细描边空心方框
                 UIColor.label.withAlphaComponent(0.62).setStroke()
-                box.lineWidth = 2.2
+                box.lineWidth = 2.2 * k
                 box.stroke()
             }
         }
@@ -1369,7 +1377,7 @@ struct TemplatePickerView: View {
                     managing = true
                 } label: {
                     Text("管理模板")
-                        .font(.system(size: 15, weight: .medium))
+                        .font(.app(15, weight: .medium))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                         .background(Color.gray.opacity(0.15))
@@ -1401,11 +1409,11 @@ struct TemplatePickerView: View {
     private func card(_ t: NoteTemplate) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(t.name)
-                .font(.system(size: 15, weight: .semibold))
+                .font(.app(15, weight: .semibold))
                 .foregroundColor(.primary)
                 .lineLimit(1)
             Text(TextEditBridge.displayFriendly(t.body))
-                .font(.system(size: 12))
+                .font(.app(12))
                 .foregroundColor(.secondary)
                 .lineLimit(7)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1429,7 +1437,7 @@ struct TemplateManageView: View {
             Group {
                 if templateStore.templates.isEmpty {
                     Text("还没有模板，点右上角 + 新建")
-                        .font(.system(size: 13))
+                        .font(.app(13))
                         .foregroundColor(.secondary)
                 } else {
                     List {
@@ -1439,10 +1447,10 @@ struct TemplateManageView: View {
                             } label: {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(t.name)
-                                        .font(.system(size: 15, weight: .semibold))
+                                        .font(.app(15, weight: .semibold))
                                         .foregroundColor(.primary)
                                     Text(TextEditBridge.displayFriendly(t.body))
-                                        .font(.system(size: 12))
+                                        .font(.app(12))
                                         .foregroundColor(.secondary)
                                         .lineLimit(2)
                                 }
@@ -1506,7 +1514,7 @@ struct TemplateEditView: View {
                 }
                 Section(header: Text("模板内容")) {
                     TextEditor(text: $bodyText)
-                        .font(.system(size: 15))
+                        .font(.app(15))
                         .frame(minHeight: 240)
                 }
             }

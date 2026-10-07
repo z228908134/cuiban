@@ -28,19 +28,19 @@ struct AlarmOverlay: View {
                 bellIcon
 
                 Text("该做了！")
-                    .font(.system(size: 17, weight: .medium))
+                    .font(.app(17, weight: .medium))
                     .foregroundColor(.white.opacity(0.85))
                     .padding(.top, 14)
 
                 Text(task.title.isEmpty ? "（未命名任务）" : task.title)
-                    .font(.system(size: 28, weight: .heavy))
+                    .font(.app(28, weight: .heavy))
                     .foregroundColor(.white)
                     .multilineTextAlignment(.center)
                     .padding(.top, 10)
                     .padding(.horizontal, 8)
 
                 Text("已逾期 \(human(overdueSeconds)) · 第 \(max(1, task.nagCount)) 次催你")
-                    .font(.system(size: 14))
+                    .font(.app(14))
                     .foregroundColor(.white.opacity(0.9))
                     .padding(.top, 12)
 
@@ -52,7 +52,7 @@ struct AlarmOverlay: View {
 
                 if !task.note.isEmpty {
                     Text(task.note)
-                        .font(.system(size: 13))
+                        .font(.app(13))
                         .foregroundColor(.white.opacity(0.7))
                         .padding(.top, 10)
                         .multilineTextAlignment(.center)
@@ -65,7 +65,7 @@ struct AlarmOverlay: View {
                     store.complete(id: task.id)
                 } label: {
                     Text("完成了")
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.app(20, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
                         .background(Color.white)
@@ -86,7 +86,7 @@ struct AlarmOverlay: View {
                     alarm.dismiss(id: task.id)
                 } label: {
                     Text("先关掉，\(task.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟后再催")
-                        .font(.system(size: 14))
+                        .font(.app(14))
                         .foregroundColor(.white.opacity(0.85))
                         .padding(.top, 16)
                 }
@@ -115,7 +115,7 @@ struct AlarmOverlay: View {
 
     private var bellIcon: some View {
         Image(systemName: "bell.and.waves.left.and.right.fill")
-            .font(.system(size: 52))
+            .font(.app(52))
             .foregroundColor(.white)
             .scaleEffect(pulsing ? 1.12 : 0.92)
             .animation(.easeInOut(duration: 0.65).repeatForever(autoreverses: true), value: pulsing)
@@ -134,7 +134,7 @@ struct AlarmOverlay: View {
             store.snooze(id: task.id, minutes: m)
         } label: {
             Text(label)
-                .font(.system(size: 14, weight: .medium))
+                .font(.app(14, weight: .medium))
                 .frame(maxWidth: .infinity)
                 .padding(.vertical, 13)
                 .background(Color.white.opacity(0.18))

@@ -41,7 +41,7 @@ struct FabButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: "plus")
-                .font(.system(size: 26, weight: .medium))
+                .font(.app(26, weight: .medium))
                 .foregroundColor(.white)
                 .frame(width: 56, height: 56)
                 .background(Circle().fill(brandColor))
@@ -56,6 +56,8 @@ struct FabButton: View {
 struct RootView: View {
     @EnvironmentObject var store: TaskStore
     @EnvironmentObject var alarm: AlarmCenter
+    /// 字号变了就整棵视图树重建一次，保证所有页面的字体立刻重算
+    @State private var fontRev = 0
 
     var body: some View {
         ZStack {
@@ -71,6 +73,7 @@ struct RootView: View {
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
             }
             .accentColor(brandColor)
+            .id(fontRev)
 
             if let id = alarm.activeTaskId, let task = store.task(id: id) {
                 AlarmOverlay(task: task)
@@ -81,6 +84,9 @@ struct RootView: View {
             AlarmLoop.shared.start()
             store.refreshAuth()
             NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: FontScale.didChange)) { _ in
+            withAnimation(.easeInOut(duration: 0.12)) { fontRev &+= 1 }
         }
         .preferredColorScheme(store.settings.theme.colorScheme)
     }

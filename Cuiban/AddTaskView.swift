@@ -133,7 +133,7 @@ struct AddTaskView: View {
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button("保存") { save() }
-                        .font(.system(size: 17, weight: .semibold))
+                        .font(.app(17, weight: .semibold))
                         .disabled(draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                                   && photos.isEmpty)
                 }
@@ -170,7 +170,7 @@ struct AddTaskView: View {
                 ZStack(alignment: .topLeading) {
                     if quickText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text("例如：下周一上午 10 点开周会，每周一次")
-                            .font(.system(size: 16))
+                            .font(.app(16))
                             .foregroundColor(.secondary)
                             .padding(.top, 11)
                             .padding(.leading, 9)
@@ -193,7 +193,7 @@ struct AddTaskView: View {
 
             if quickBusy {
                 Text("正在解析…")
-                    .font(.system(size: 12))
+                    .font(.app(12))
                     .foregroundColor(.secondary)
             }
 
@@ -205,7 +205,7 @@ struct AddTaskView: View {
                     aiError = nil
                 } label: {
                     Text("清空这句话")
-                        .font(.system(size: 13))
+                        .font(.app(13))
                 }
             }
         }
@@ -219,7 +219,7 @@ struct AddTaskView: View {
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.8)
                     Text("正在读图…")
-                        .font(.system(size: 13))
+                        .font(.app(13))
                         .foregroundColor(.secondary)
                 }
             }
@@ -228,7 +228,7 @@ struct AddTaskView: View {
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.8)
                     Text("AI 正在复核…")
-                        .font(.system(size: 13))
+                        .font(.app(13))
                         .foregroundColor(.secondary)
                 }
             }
@@ -237,7 +237,7 @@ struct AddTaskView: View {
                     footer: Text("识别结论已经写进备注，可以随时改。")) {
                 if let s = parseSummary {
                     Text(s)
-                        .font(.system(size: 14))
+                        .font(.app(14))
                         .fixedSize(horizontal: false, vertical: true)
                 }
 
@@ -246,7 +246,7 @@ struct AddTaskView: View {
                         Image(systemName: "info.circle")
                         Text(t).fixedSize(horizontal: false, vertical: true)
                     }
-                    .font(.system(size: 12))
+                    .font(.app(12))
                     .foregroundColor(.orange)
                 }
 
@@ -255,7 +255,7 @@ struct AddTaskView: View {
                         Image(systemName: "exclamationmark.triangle")
                         Text(e).fixedSize(horizontal: false, vertical: true)
                     }
-                    .font(.system(size: 12))
+                    .font(.app(12))
                     .foregroundColor(.orange)
                 }
             }
@@ -304,7 +304,7 @@ struct AddTaskView: View {
                                     removePhoto(at: idx)
                                 } label: {
                                     Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 19))
+                                        .font(.app(19))
                                         .foregroundColor(.white)
                                         .background(Circle().fill(Color.black.opacity(0.5)))
                                 }
@@ -317,7 +317,7 @@ struct AddTaskView: View {
                     .padding(.vertical, 2)
                 }
                 Text("点图看大图（共 \(photos.count) 张）")
-                    .font(.system(size: 12))
+                    .font(.app(12))
                     .foregroundColor(.secondary)
             }
 
@@ -338,7 +338,7 @@ struct AddTaskView: View {
                 HStack(spacing: 8) {
                     ProgressView().scaleEffect(0.8)
                     Text("正在读图…")
-                        .font(.system(size: 13))
+                        .font(.app(13))
                         .foregroundColor(.secondary)
                 }
             }
@@ -346,7 +346,7 @@ struct AddTaskView: View {
             if !photos.isEmpty && !scanning {
                 HStack(spacing: 18) {
                     Button("重新识别") { runOCR() }
-                        .font(.system(size: 13))
+                        .font(.app(13))
                     Button("清除全部图片") {
                         withAnimation {
                             photos = []
@@ -355,7 +355,7 @@ struct AddTaskView: View {
                             aiError = nil
                         }
                     }
-                    .font(.system(size: 13))
+                    .font(.app(13))
                     .foregroundColor(.red)
                 }
             }
@@ -366,14 +366,14 @@ struct AddTaskView: View {
         ZStack(alignment: .topLeading) {
             if draft.note.isEmpty {
                 Text("可写备注；用图片或一句话识别时，结果会自动写在这里")
-                    .font(.system(size: 15))
+                    .font(.app(15))
                     .foregroundColor(.secondary)
                     .padding(.top, 8)
                     .padding(.leading, 5)
                     .allowsHitTesting(false)
             }
             TextEditor(text: $draft.note)
-                .font(.system(size: 15))
+                .font(.app(15))
                 .frame(minHeight: 96)
         }
     }
@@ -385,7 +385,7 @@ struct AddTaskView: View {
                     toggleWeekday(wd)
                 } label: {
                     Text(chipName(wd))
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.app(13, weight: .medium))
                         .frame(width: 32, height: 32)
                         .background(draft.weekdays.contains(wd) ? brandColor : Color.gray.opacity(0.16))
                         .foregroundColor(draft.weekdays.contains(wd) ? .white : .primary)
@@ -588,7 +588,7 @@ struct AddTaskView: View {
             draft.dueDate = Date().addingTimeInterval(offset)
         } label: {
             Text(label)
-                .font(.system(size: 12, weight: .medium))
+                .font(.app(12, weight: .medium))
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(brandColor.opacity(0.12))

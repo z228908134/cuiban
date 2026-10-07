@@ -45,7 +45,7 @@ struct CardListView: View {
                     showingAdd = true
                 } label: {
                     Image(systemName: "plus.circle")
-                        .font(.system(size: 20, weight: .regular))
+                        .font(.app(20, weight: .regular))
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
@@ -65,7 +65,7 @@ struct CardListView: View {
                     } label: { Label("从剪贴板识别卡号", systemImage: "doc.on.clipboard") }
                 } label: {
                     Image(systemName: "ellipsis.circle")
-                        .font(.system(size: 20, weight: .regular))
+                        .font(.app(20, weight: .regular))
                 }
             }
         }
@@ -100,10 +100,10 @@ struct CardListView: View {
     private var searchBar: some View {
         HStack(spacing: 7) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 14))
+                .font(.app(14))
                 .foregroundColor(.secondary)
             TextField("搜银行 / 卡号 / 户主 / 备注", text: $keyword)
-                .font(.system(size: 15))
+                .font(.app(15))
                 .autocapitalization(.none)
                 .disableAutocorrection(true)
             if !keyword.isEmpty {
@@ -111,7 +111,7 @@ struct CardListView: View {
                     keyword = ""
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 15))
+                        .font(.app(15))
                         .foregroundColor(.secondary)
                 }
                 .buttonStyle(.plain)
@@ -148,9 +148,9 @@ struct CardListView: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Text(title)
-                    .font(.system(size: 14, weight: active ? .semibold : .regular))
+                    .font(.app(14, weight: active ? .semibold : .regular))
                 Text("\(count)")
-                    .font(.system(size: 12, weight: .semibold))
+                    .font(.app(12, weight: .semibold))
                     .foregroundColor(active ? .white.opacity(0.85) : .secondary)
             }
             .foregroundColor(active ? .white : .primary)
@@ -171,12 +171,12 @@ struct CardListView: View {
         if list.isEmpty {
             VStack(spacing: 10) {
                 Image(systemName: "creditcard")
-                    .font(.system(size: 40))
+                    .font(.app(40))
                     .foregroundColor(.secondary)
                 Text(store.cards.isEmpty ? "还没有卡片" : "这个分类下还没有卡片")
-                    .font(.system(size: 15, weight: .medium))
+                    .font(.app(15, weight: .medium))
                 Text(store.cards.isEmpty ? "点右上角 + 存一张，卡号和图片都只存在本机" : "换个分类看看")
-                    .font(.system(size: 12))
+                    .font(.app(12))
                     .foregroundColor(.secondary)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -218,22 +218,22 @@ struct CardRow: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 6) {
                 Text(card.displayName)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.app(17, weight: .semibold))
                     .lineLimit(1)
                 if !card.photos.isEmpty {
                     Image(systemName: "photo.on.rectangle")
-                        .font(.system(size: 11))
+                        .font(.app(11))
                         .foregroundColor(.secondary)
                 }
                 Spacer()
             }
             Text(card.subtitle)
-                .font(.system(size: 12))
+                .font(.app(12))
                 .foregroundColor(.secondary)
                 .lineLimit(1)
             if !card.number.isEmpty {
                 Text(card.numberGrouped)
-                    .font(.system(size: 17, weight: .medium, design: .monospaced))
+                    .font(.app(17, weight: .medium, design: .monospaced))
                     .foregroundColor(.primary)
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
@@ -309,20 +309,20 @@ struct CardDetailView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     HStack {
                         Text(c.type.label)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.app(13, weight: .medium))
                             .foregroundColor(.white.opacity(0.9))
                         Spacer()
                         Image(systemName: "creditcard")
-                            .font(.system(size: 20))
+                            .font(.app(20))
                             .foregroundColor(.white.opacity(0.85))
                     }
                     Text(c.numberGrouped.isEmpty ? "未填卡号" : c.numberGrouped)
-                        .font(.system(size: 22, weight: .medium, design: .monospaced))
+                        .font(.app(22, weight: .medium, design: .monospaced))
                         .foregroundColor(.white)
                         .lineLimit(1)
                         .minimumScaleFactor(0.6)
                     Text(c.bank.isEmpty ? "未填开户行" : c.bank)
-                        .font(.system(size: 13))
+                        .font(.app(13))
                         .foregroundColor(.white.opacity(0.85))
                 }
                 .padding(16)
@@ -354,11 +354,11 @@ struct CardDetailView: View {
                 // 图片
                 VStack(alignment: .leading, spacing: 8) {
                     Text("图片")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.app(13, weight: .medium))
                         .foregroundColor(.secondary)
                     if c.photos.isEmpty {
                         Text("没有图片")
-                            .font(.system(size: 13))
+                            .font(.app(13))
                             .foregroundColor(.secondary)
                     } else {
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -387,7 +387,7 @@ struct CardDetailView: View {
                     confirmDelete = true
                 } label: {
                     Text("删除这张卡片")
-                        .font(.system(size: 15))
+                        .font(.app(15))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
                 }
@@ -406,10 +406,10 @@ struct CardDetailView: View {
     private func infoRow(_ k: String, _ v: String) -> some View {
         HStack(alignment: .top) {
             Text(k)
-                .font(.system(size: 15))
+                .font(.app(15))
                 .frame(width: 72, alignment: .leading)
             Text(v)
-                .font(.system(size: 15))
+                .font(.app(15))
                 .foregroundColor(.primary.opacity(0.9))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -498,17 +498,17 @@ struct CardEditView: View {
         VStack(spacing: 0) {
             VStack(spacing: 0) {
                 row {
-                    Text("类型").font(.system(size: 15))
+                    Text("类型").font(.app(15))
                     Spacer()
                     Button {
                         showTypePicker = true
                     } label: {
                         HStack(spacing: 4) {
                             Text(type.label)
-                                .font(.system(size: 15))
+                                .font(.app(15))
                                 .foregroundColor(.primary.opacity(0.9))
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.app(12, weight: .semibold))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -532,17 +532,17 @@ struct CardEditView: View {
                 }
                 sep
                 row {
-                    Text("图片").font(.system(size: 15))
+                    Text("图片").font(.app(15))
                     Spacer()
                     Button {
                         photoSource = .library
                     } label: {
                         HStack(spacing: 4) {
                             Text(photos.isEmpty ? "上传" : "\(photos.count) 张")
-                                .font(.system(size: 15))
+                                .font(.app(15))
                                 .foregroundColor(.primary.opacity(0.9))
                             Image(systemName: "chevron.right")
-                                .font(.system(size: 12, weight: .semibold))
+                                .font(.app(12, weight: .semibold))
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -586,7 +586,7 @@ struct CardEditView: View {
                                     photos.remove(at: i)
                                 } label: {
                                     Image(systemName: "xmark.circle.fill")
-                                        .font(.system(size: 17))
+                                        .font(.app(17))
                                         .foregroundColor(.white)
                                         .background(Circle().fill(Color.black.opacity(0.5)))
                                 }
@@ -600,10 +600,10 @@ struct CardEditView: View {
                         } label: {
                             VStack(spacing: 4) {
                                 Image(systemName: "camera")
-                                    .font(.system(size: 20))
+                                    .font(.app(20))
                                     .foregroundColor(brandColor)
                                 Text("拍照")
-                                    .font(.system(size: 11))
+                                    .font(.app(11))
                                     .foregroundColor(.secondary)
                             }
                             .frame(width: 92, height: 92)
@@ -624,7 +624,7 @@ struct CardEditView: View {
             Divider()
             Button(action: save) {
                 Text("保存")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.app(17, weight: .semibold))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 14)
@@ -650,10 +650,10 @@ struct CardEditView: View {
                        keyboard: UIKeyboardType = .default) -> some View {
         HStack {
             Text(title)
-                .font(.system(size: 15))
+                .font(.app(15))
                 .frame(width: 116, alignment: .leading)
             TextField(prompt, text: text)
-                .font(.system(size: 15))
+                .font(.app(15))
                 .keyboardType(keyboard)
                 .multilineTextAlignment(.trailing)
         }
@@ -692,13 +692,13 @@ struct CardTypePicker: View {
         VStack(spacing: 0) {
             HStack {
                 Text("卡片类型")
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.app(17, weight: .semibold))
                 Spacer()
                 Button {
                     self.dismiss()
                 } label: {
                     Image(systemName: "xmark")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.app(13, weight: .medium))
                         .foregroundColor(.secondary)
                         .frame(width: 28, height: 28)
                         .background(Circle().fill(Color.primary.opacity(0.08)))
@@ -715,12 +715,12 @@ struct CardTypePicker: View {
                 } label: {
                     HStack {
                         Text(t.label)
-                            .font(.system(size: 16))
+                            .font(.app(16))
                             .foregroundColor(.primary)
                         Spacer()
                         if t == current {
                             Image(systemName: "checkmark")
-                                .font(.system(size: 15, weight: .semibold))
+                                .font(.app(15, weight: .semibold))
                                 .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
                         }
                     }

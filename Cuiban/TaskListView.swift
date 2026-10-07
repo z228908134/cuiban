@@ -45,7 +45,7 @@ struct TaskListView: View {
                             showFinished.toggle()
                         } label: {
                             Text(showFinished ? "收起已完成" : "展开已完成 (\(store.finished.count))")
-                                .font(.system(size: 13))
+                                .font(.app(13))
                         }
                     } header: {
                         Text("已完成")
@@ -76,11 +76,11 @@ struct TaskListView: View {
     private var emptyHint: some View {
         VStack(spacing: 8) {
             Image(systemName: "bell.slash")
-                .font(.system(size: 34))
+                .font(.app(34))
                 .foregroundColor(.secondary)
-            Text("还没有任务").font(.system(size: 15, weight: .medium))
+            Text("还没有任务").font(.app(15, weight: .medium))
             Text("点右下角 + 添加，到点不完成就一路催你")
-                .font(.system(size: 12))
+                .font(.app(12))
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -95,18 +95,18 @@ struct TaskListView: View {
                 if t.isDone { store.uncomplete(id: t.id) } else { store.complete(id: t.id) }
             } label: {
                 Image(systemName: t.isDone ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 22))
+                    .font(.app(22))
                     .foregroundColor(t.isDone ? .green : (t.isOverdue ? .red : .secondary))
             }
             .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 3) {
                 Text(t.title.isEmpty ? "（未命名）" : t.title)
-                    .font(.system(size: 16, weight: .semibold))
+                    .font(.app(16, weight: .semibold))
                     .strikethrough(t.isDone)
                     .foregroundColor(t.isDone ? .secondary : .primary)
                 Text(dueLine(t))
-                    .font(.system(size: 12))
+                    .font(.app(12))
                     .foregroundColor(t.isOverdue ? .red : .secondary)
             }
 
@@ -115,11 +115,11 @@ struct TaskListView: View {
             if !t.isDone {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text("每 \(t.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟")
-                        .font(.system(size: 11))
+                        .font(.app(11))
                         .foregroundColor(.secondary)
                     if t.nagCount > 0 {
                         Text("催 \(t.nagCount) 次")
-                            .font(.system(size: 11, weight: .bold))
+                            .font(.app(11, weight: .bold))
                             .padding(.horizontal, 7)
                             .padding(.vertical, 2)
                             .background(Color.red.opacity(0.12))
@@ -209,7 +209,7 @@ struct TaskDetailView: View {
                         editing = current
                     } label: {
                         Text("编辑")
-                            .font(.system(size: 16, weight: .semibold))
+                            .font(.app(16, weight: .semibold))
                     }
                 }
             }
@@ -234,7 +234,7 @@ struct TaskDetailView: View {
             Image(systemName: current.isDone
                   ? "checkmark.circle.fill"
                   : (current.isOverdue ? "exclamationmark.circle.fill" : "circle"))
-                .font(.system(size: 24))
+                .font(.app(24))
                 .foregroundColor(current.isDone
                                  ? .green
                                  : (current.isOverdue ? .red : .secondary))
@@ -242,11 +242,11 @@ struct TaskDetailView: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(current.title.isEmpty ? "（未命名）" : current.title)
-                    .font(.system(size: 20, weight: .semibold))
+                    .font(.app(20, weight: .semibold))
                     .strikethrough(current.isDone)
                     .foregroundColor(current.isDone ? .secondary : .primary)
                 Text(dueLine(current))
-                    .font(.system(size: 13))
+                    .font(.app(13))
                     .foregroundColor(current.isDone
                                      ? .secondary
                                      : (current.isOverdue ? .red : .secondary))
@@ -281,15 +281,15 @@ struct TaskDetailView: View {
     private func infoRow(icon: String, label: String, value: String) -> some View {
         HStack(spacing: 10) {
             Image(systemName: icon)
-                .font(.system(size: 14))
+                .font(.app(14))
                 .foregroundColor(.secondary)
                 .frame(width: 20)
             Text(label)
-                .font(.system(size: 14))
+                .font(.app(14))
                 .foregroundColor(.secondary)
             Spacer()
             Text(value)
-                .font(.system(size: 14, weight: .medium))
+                .font(.app(14, weight: .medium))
                 .foregroundColor(.primary)
         }
         .padding(.horizontal, 14)
@@ -338,7 +338,7 @@ struct TaskDetailView: View {
     private var noteBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("备注", systemImage: "text.alignleft")
-                .font(.system(size: 13, weight: .medium))
+                .font(.app(13, weight: .medium))
                 .foregroundColor(.secondary)
 
             VStack(alignment: .leading, spacing: 5) {
@@ -360,14 +360,14 @@ struct TaskDetailView: View {
         if let body = TextEditBridge.stripMark(in: line) {
             HStack(alignment: .top, spacing: 7) {
                 Image(systemName: checked ? "checkmark.square.fill" : "square")
-                    .font(.system(size: 14))
+                    .font(.app(14))
                     .foregroundColor(checked ? .blue : .secondary)
                     .padding(.top, 2.5)
                 if body.isEmpty {
                     Rectangle().fill(Color.clear).frame(height: 1)
                 } else {
                     Text(body)
-                        .font(.system(size: 15))
+                        .font(.app(15))
                         .strikethrough(checked)
                         .fixedSize(horizontal: false, vertical: true)
                         .foregroundColor(checked ? .secondary : .primary)
@@ -375,7 +375,7 @@ struct TaskDetailView: View {
             }
         } else {
             Text(line)
-                .font(.system(size: 15))
+                .font(.app(15))
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -385,7 +385,7 @@ struct TaskDetailView: View {
     private var photoBlock: some View {
         VStack(alignment: .leading, spacing: 10) {
             Label("照片 · \(current.photos.count) 张", systemImage: "photo.on.rectangle.angled")
-                .font(.system(size: 13, weight: .medium))
+                .font(.app(13, weight: .medium))
                 .foregroundColor(.secondary)
 
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: 3), spacing: 8) {

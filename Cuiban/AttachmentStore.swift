@@ -168,7 +168,7 @@ struct PhotoStrip: View {
             }
             if names.count > maxCount {
                 Text("+\(names.count - maxCount)")
-                    .font(.system(size: max(size * 0.26, 10), weight: .semibold))
+                    .font(.app(max(size * 0.26, 10), weight: .semibold))
                     .foregroundColor(.secondary)
                     .frame(width: size, height: size)
                     .background(Color.gray.opacity(0.15))
@@ -210,7 +210,7 @@ struct PhotoViewer: View {
 
                             if i < titles.count, !titles[i].isEmpty {
                                 Text(titles[i])
-                                    .font(.system(size: 13))
+                                    .font(.app(13))
                                     .foregroundColor(.white.opacity(0.75))
                                     .multilineTextAlignment(.center)
                                     .padding(.horizontal, 20)
@@ -229,7 +229,7 @@ struct PhotoViewer: View {
                         presentationMode.wrappedValue.dismiss()
                     } label: {
                         Image(systemName: "xmark")
-                            .font(.system(size: 16, weight: .bold))
+                            .font(.app(16, weight: .bold))
                             .foregroundColor(.white)
                             .frame(width: 34, height: 34)
                             .background(Circle().fill(Color.white.opacity(0.18)))
