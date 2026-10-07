@@ -296,7 +296,7 @@ struct NoteEditorView: View {
             defaultName: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     ? String(displayTitleForTemplate.prefix(20))
     : title,
-              body: bodyText,
+              templateBody: bodyText,
         styleData: styleData)
         }
             .onDisappear { saveIfWorth() }
@@ -1489,8 +1489,10 @@ struct SaveAsTemplateSheet: View {
     @Environment(\.dismiss) private var dismiss
     @ObservedObject private var store = TemplateStore.shared
 
-    let defaultName: String
-    let body: String
+let defaultName: String
+/// 叫 templateBody 不叫 body：`body` 是 SwiftUI.View 的属性，
+/// 参数名撞了会报 invalid redeclaration
+    let templateBody: String
     let styleData: String
 
     @State private var name = ""
@@ -1505,9 +1507,9 @@ struct SaveAsTemplateSheet: View {
                         .focused($focused)
                 }
 
-                Section {
-                    Text(body.isEmpty ? "（正文是空的）"
-                         : String(body.prefix(120)) + (body.count > 120 ? "…" : ""))
+      Section {
+  Text(templateBody.isEmpty ? "（正文是空的）"
+        : String(templateBody.prefix(120)) + (templateBody.count > 120 ? "…" : ""))
                         .font(.app(12))
                         .foregroundColor(.secondary)
                 } header: {
@@ -1537,8 +1539,8 @@ struct SaveAsTemplateSheet: View {
 
     private func save() {
         let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !n.isEmpty, !body.isEmpty else { return }
-        var t = NoteTemplate(name: n, body: body)
+        guard !n.isEmpty, !templateBody.isEmpty else { return }
+        var t = NoteTemplate(name: n, body: templateBody)
         // 有样式才存，空的 styleData 写进去会让模板列表变重
         let s = NoteStyle.decode(styleData)
         if !s.isEmpty { t.styleData = styleData }
