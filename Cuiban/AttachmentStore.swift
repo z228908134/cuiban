@@ -195,7 +195,9 @@ struct PhotoViewer: View {
         self._index = State(initialValue: max(0, min(start, images.count - 1)))
     }
 
-    private var close: () -> Void { presentationMode.wrappedValue.dismiss() }
+    private func closeViewer() {
+        presentationMode.wrappedValue.dismiss()
+    }
 
     var body: some View {
         ZStack {
@@ -253,7 +255,7 @@ struct PhotoViewer: View {
             VStack {
                 HStack {
                     Spacer()
-                    Button(action: close) {
+                    Button(action: closeViewer) {
                         Image(systemName: "xmark")
                             .font(.app(17, weight: .bold))
                             .foregroundColor(.white)
@@ -292,7 +294,7 @@ struct PhotoViewer: View {
                         && v.predictedEndTranslation.height > 260) {
                     dismissing = true
                     withAnimation(.easeOut(duration: 0.18)) { dragY = 900 }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { close() }
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.18) { closeViewer() }
                 } else {
                     withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                         dragY = 0
