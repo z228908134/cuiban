@@ -86,7 +86,7 @@ struct NotesView: View {
     private func row(_ n: NoteItem) -> some View {
         // 用 contentShape + onTapGesture 而不是 Button 包裹：
         // Button 会吃掉左滑手势，导致 swipeActions 划不出来
-        VStack(alignment: .leading, spacing: 5) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 Text(n.displayTitle)
                     .font(.app(16, weight: .semibold))
@@ -104,6 +104,7 @@ struct NotesView: View {
                 Text(n.snippet)
                     .font(.app(13))
                     .foregroundColor(.secondary)
+                    .lineSpacing(3)
                     .lineLimit(2)
             }
 
@@ -118,7 +119,7 @@ struct NotesView: View {
                     RoundedRectangle(cornerRadius: 5).fill(timeTagBg(n.updatedAt))
                 )
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 7)
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { editing = n }
@@ -282,6 +283,7 @@ struct NoteEditorView: View {
                 Text("记录你的想法，或使用模板")
                     .font(.app(16))
                     .foregroundColor(.secondary)
+                    .lineSpacing(4)
                     .padding(.top, 10)
                     .padding(.leading, 18)
                     .allowsHitTesting(false)
@@ -475,15 +477,34 @@ struct NoteBodyEditor: UIViewRepresentable {
     @Binding var activeTraits: Set<String>
     var bridge: TextEditBridge
 
-    /// 正文基准字号。用计算属性而不是 static let：字号设置改了之后要立刻生效，
-    /// 缓存住就再也变不回来了
+    /// 字体只取系统字族（苹方 / SF），不自造字体，也不写死具体字体名。
+    /// 字号、字重、行距全部由系统度量决定，我们只在其上加一点行距留白。
     static var baseFont: UIFont { UIFont.app(16) }
+
+    /// 行距：滴答清单那种「行与行之间有呼吸」的观感。
+    /// 系统字体的默认行高已经很紧（16pt 正文实际行高约 19pt），
+    /// 再加上勾选框用了 22~24pt 的大字号，行与行几乎贴在一起。
+    /// 这里按字号给一个固定比例的额外行距，字号跟着全局缩放走，行距也跟着等比放大。
+    static var lineSpacing: CGFloat { 8 * FontScale.current }
+
+    /// 正文统一段落样式：只用系统度量 + 额外行距，不指定字体名
+    static func paragraphStyle() -> NSParagraphStyle {
+        let p = NSMutableParagraphStyle()
+        p.lineSpacing = lineSpacing
+        p.lineHeightMultiple = 1
+        p.paragraphSpacing = 0
+        p.hyphenationFactor = 0
+        return p
+    }
 
     func makeUIView(context: Context) -> UITextView {
         let tv = CheckboxTextView()
         tv.font = Self.baseFont
         tv.textColor = .label
         tv.backgroundColor = .clear
+        // 新输入的行也走同一套行距：UITextView 的默认段落样式决定回车后的行高
+        tv.paragraphStyle = Self.paragraphStyle()
+        tv.typingAttributes = Self.attrsFor([])
         tv.delegate = context.coordinator
         bridge.textView = tv
         let binding = $text
@@ -561,7 +582,11 @@ struct NoteBodyEditor: UIViewRepresentable {
 
     /// 给某个样式集合生成属性字典（打字属性也复用）
     static func attrsFor(_ traits: Set<String>) -> [NSAttributedString.Key: Any] {
-        var tp: [NSAttributedString.Key: Any] = [.font: baseFont, .foregroundColor: UIColor.label]
+        var tp: [NSAttributedString.Key: Any] = [
+            .font: baseFont,
+            .foregroundColor: UIColor.label,
+            .paragraphStyle: paragraphStyle()
+        ]
         if traits.contains("b") || traits.contains("i") || traits.contains("m") {
             tp[.font] = fontFor(bold: traits.contains("b"),
                                 italic: traits.contains("i"),
@@ -586,7 +611,11 @@ struct NoteBodyEditor: UIViewRepresentable {
         let content = tv.text ?? ""
         let attr = NSMutableAttributedString(
             string: content,
-            attributes: [.font: Self.baseFont, .foregroundColor: UIColor.label]
+            attributes: [
+                .font: Self.baseFont,
+                .foregroundColor: UIColor.label,
+                .paragraphStyle: Self.paragraphStyle()
+            ]
         )
         let cns = content as NSString
         var loc = 0
