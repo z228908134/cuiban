@@ -48,12 +48,13 @@ final class NoteStore: ObservableObject {
     private func load() {
         if let data = try? Data(contentsOf: file),
            let list = try? JSONDecoder().decode([NoteItem].self, from: data) {
-            // 旧版本勾选框写法（⬜️/✅/- [ ]）迁移成新标记
+            // 旧版本勾选框写法（私有区字符 / ⬜️/✅/- [ ]）迁移成新标记并落盘
             notes = list.map { n in
                 var m = n
                 m.body = TextEditBridge.migrate(m.body)
                 return m
             }
+            save()
         }
     }
 
