@@ -309,14 +309,14 @@ struct MonthView: View {
                                 Button {
                                     editing = e.task
                                 } label: {
-                                    Label("编辑", systemImage: "square.and.pencil")
+                                    Label("改", systemImage: "square.and.pencil")
                                 }
                                 .tint(.blue)
 
                                 Button(role: .destructive) {
                                     store.delete(id: e.task.id)
                                 } label: {
-                                    Label("删除", systemImage: "trash")
+                                    Label("删", systemImage: "trash")
                                 }
                             }
                             .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))

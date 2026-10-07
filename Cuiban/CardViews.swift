@@ -210,10 +210,12 @@ struct CardListView: View {
                         .contentShape(Rectangle())
                         .onTapGesture { detail = c }
                         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            // 系统 swipeActions 的按钮宽度跟着标题走，用两字（「改 / 删」）
+                            // 比「编辑 / 删除」窄一半，露出得更克制
                             Button {
                                 editing = c
                             } label: {
-                                Label("编辑", systemImage: "square.and.pencil")
+                                Label("改", systemImage: "square.and.pencil")
                             }
                             .tint(.blue)
 
@@ -223,7 +225,7 @@ struct CardListView: View {
                                     message: c.displayName,
                                     okTitle: "删除") { store.delete(id: c.id) }
                             } label: {
-                                Label("删除", systemImage: "trash")
+                                Label("删", systemImage: "trash")
                             }
                         }
                         .contextMenu {
@@ -277,6 +279,18 @@ struct CardRow: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.7)
             }
+            // 户主 + 备注（有值才显示，和详情页一致）
+            if !card.holder.isEmpty || !card.note.isEmpty {
+                HStack(spacing: 6) {
+                    if !card.holder.isEmpty {
+                        metaChip(icon: "person", text: card.holder)
+                    }
+                    if !card.note.isEmpty {
+                        metaChip(icon: "text.alignleft", text: card.note)
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 14)
@@ -284,6 +298,24 @@ struct CardRow: View {
         .background(
             RoundedRectangle(cornerRadius: 14)
                 .fill(Color(UIColor.secondarySystemGroupedBackground))
+        )
+    }
+
+    /// 户主 / 备注的小标签
+    private func metaChip(icon: String, text: String) -> some View {
+        HStack(spacing: 3) {
+            Image(systemName: icon)
+                .font(.app(9))
+            Text(text)
+                .font(.app(11))
+                .lineLimit(1)
+        }
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 2)
+        .background(
+            RoundedRectangle(cornerRadius: 4)
+                .fill(Color.primary.opacity(0.06))
         )
     }
 }
