@@ -10,3 +10,10 @@ issue.md
 Cuiban/Resources/*.wav
 Cuiban/Assets.xcassets/AppIcon.appiconset/*.png
 preview-icon-*.png
+
+# 本地临时脚本
+runs.py
+runs.json
+jobs.json
+joblog.txt
+runs.txt
