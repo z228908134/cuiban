@@ -14,6 +14,8 @@ struct BackupPayload: Codable {
     var photos: [String: String] = [:]
     /// 笔记（v1.4 起包含）
     var notes: [NoteItem]? = nil
+    /// 卡片备份（v1.6.14 起包含）
+    var cards: [CardItem]? = nil
 }
 
 /// 一份本地备份的条目（设置页展示用）
@@ -116,7 +118,10 @@ enum BackupStore {
         payload.settings = settings
         if settings.backupIncludePhotos {
             var photos: [String: String] = [:]
-            for n in Set(tasks.flatMap { $0.photos }) {
+            let names = Set(tasks.flatMap { $0.photos })
+                .union(CardStore.shared.cards.flatMap { $0.photos })
+                .union(NoteStore.shared.notes.flatMap { $0.photos })
+            for n in names {
                 if let data = try? Data(contentsOf: AttachmentStore.url(n)) {
                     photos[n] = data.base64EncodedString()
                 }
@@ -124,6 +129,7 @@ enum BackupStore {
             payload.photos = photos
         }
         payload.notes = NoteStore.shared.notes
+        payload.cards = CardStore.shared.cards
         return payload
     }
 
@@ -151,8 +157,12 @@ enum BackupStore {
         if let ns = payload.notes {
             NoteStore.shared.replaceAll(ns)
         }
+        if let cs = payload.cards {
+            CardStore.shared.replaceAll(cs)
+        }
         var s = "已恢复 \(payload.tasks.count) 个任务"
         if let ns = payload.notes, !ns.isEmpty { s += "、\(ns.count) 条笔记" }
+        if let cs = payload.cards, !cs.isEmpty { s += "、\(cs.count) 张卡片" }
         if restoredPhotos > 0 { s += "、\(restoredPhotos) 张照片" }
         if payload.tasks.isEmpty { s += "（备份里没有任务，相当于清空）" }
         return s

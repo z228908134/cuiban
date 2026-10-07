@@ -211,6 +211,23 @@ struct SettingsView: View {
                     }
                 }
 
+                // MARK: 卡片备份
+
+                Section(header: Text("卡片备份"),
+                        footer: Text("银行卡、信用卡的卡号和图片都只存在这台手机上，不会上传到任何服务器。图片和任务里的照片放在一起，删卡片会连图片一起删。")) {
+                    NavigationLink {
+                        CardListView()
+                    } label: {
+                        HStack {
+                            Label("卡片备份", systemImage: "creditcard")
+                            Spacer()
+                            Text("\(CardStore.shared.cards.count) 张")
+                                .font(.system(size: 13))
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
                 // MARK: 数据
 
                 Section(header: Text("数据")) {

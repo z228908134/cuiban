@@ -763,26 +763,26 @@ final class CheckboxTextView: UITextView {
 /// 太小、也太难点。自己画能精确控制大小和粗细。
 /// 文字里存的仍然是 ☐/☑ 字符（万一附件没挂上，也能看到方框而不是空白）。
 enum CheckboxArt {
-    /// 24pt 画布、20pt 方框，比正文（16pt）明显大一圈，好看也好点
-    static let size = CGSize(width: 24, height: 24)
+    /// 32pt 画布、28pt 方框，比正文（16pt）大一大圈，好看也好点
+    static let size = CGSize(width: 32, height: 32)
     static let checked = image(checked: true)
     static let unchecked = image(checked: false)
 
     static func image(checked: Bool) -> UIImage {
         UIGraphicsImageRenderer(size: size).image { _ in
-            let rect = CGRect(x: 2, y: 2, width: 20, height: 20)
-            let box = UIBezierPath(roundedRect: rect, cornerRadius: 5)
+            let rect = CGRect(x: 2.5, y: 2.5, width: 27, height: 27)
+            let box = UIBezierPath(roundedRect: rect, cornerRadius: 6.5)
             if checked {
                 // 勾过的：框线浅一点，勾子深一点，整行随之变灰
                 UIColor.label.withAlphaComponent(0.34).setStroke()
-                box.lineWidth = 1.5
+                box.lineWidth = 1.8
                 box.stroke()
 
                 let mark = UIBezierPath()
-                mark.move(to: CGPoint(x: 6, y: 12))
-                mark.addLine(to: CGPoint(x: 9.4, y: 15.4))
-                mark.addLine(to: CGPoint(x: 17.4, y: 7))
-                mark.lineWidth = 2.3
+                mark.move(to: CGPoint(x: 8.4, y: 16.4))
+                mark.addLine(to: CGPoint(x: 13.2, y: 21.2))
+                mark.addLine(to: CGPoint(x: 23.6, y: 9.6))
+                mark.lineWidth = 2.8
                 mark.lineCapStyle = .round
                 mark.lineJoinStyle = .round
                 UIColor.label.withAlphaComponent(0.55).setStroke()
@@ -790,7 +790,7 @@ enum CheckboxArt {
             } else {
                 // 未勾选：清晰的深灰细描边空心方框
                 UIColor.label.withAlphaComponent(0.62).setStroke()
-                box.lineWidth = 1.8
+                box.lineWidth = 2.2
                 box.stroke()
             }
         }
