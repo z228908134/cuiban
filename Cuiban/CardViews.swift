@@ -470,6 +470,7 @@ struct CardEditView: View {
                     type = t
                     showTypePicker = false
                 }
+                .presentationDetents([.height(420)])
             }
             .fullScreenCover(isPresented: $viewerOpen) {
                 PhotoViewer(images: AttachmentStore.loadAll(photos),
