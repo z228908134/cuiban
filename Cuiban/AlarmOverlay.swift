@@ -56,10 +56,20 @@ struct AlarmOverlay: View {
                         .padding(.top, 12)
                 }
 
-                if !task.photos.isEmpty {
-                    PhotoStrip(names: task.photos, size: 76, maxCount: 3, radius: 12)
-                        .padding(.top, 14)
-                        .onTapGesture { previewOpen = true }
+                Group {
+                    if let e = task.endDate {
+                        // 活动中途催办时把终点也带上，避免「还没结束」的误判
+                        Text("这条清单 \(fmt(e, "M月d日 HH:mm")) 结束")
+                            .font(.app(12))
+                            .foregroundColor(.white.opacity(0.7))
+                            .padding(.top, 6)
+                    }
+
+                    if !task.photos.isEmpty {
+                        PhotoStrip(names: task.photos, size: 76, maxCount: 3, radius: 12)
+                            .padding(.top, 14)
+                            .onTapGesture { previewOpen = true }
+                    }
                 }
 
                 if !task.note.isEmpty {

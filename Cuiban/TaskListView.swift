@@ -159,6 +159,13 @@ struct TaskListView: View {
                             .foregroundColor(.red)
                             .clipShape(Capsule())
                     }
+                    // 设了清单结束时间的：把终点也摆在右边，
+                    // 一眼能看出这条清单是「有期限的」，不是一直挂着
+                    if let e = t.endDate {
+                        Text("结束 " + fmt(e, "M/d HH:mm"))
+                            .font(.app(10))
+                            .foregroundColor(.secondary)
+                    }
                 }
             }
         }
@@ -358,6 +365,11 @@ struct TaskDetailView: View {
     private var infoBlock: some View {
         VStack(spacing: 0) {
             infoRow(icon: "bell", label: "提醒时间", value: timeLabel(current.effectiveDue))
+            if let e = current.endDate {
+                Divider().padding(.leading, 38)
+                infoRow(icon: "flag.checkered", label: "清单结束",
+                        value: timeLabel(e) + (current.hasEnded() ? "（已结束）" : ""))
+            }
             Divider().padding(.leading, 38)
             infoRow(icon: "repeat", label: "重复",
                     value: repeatText(current))
@@ -457,6 +469,12 @@ struct TaskDetailView: View {
     }
 
     private var hitDesc: String {
+        let base = baseHitDesc
+        guard let e = current.endDate else { return base }
+        return base + "已设清单结束时间 \(timeLabel(e))，到点任务自动完成归档，不再开下一轮。"
+    }
+
+    private var baseHitDesc: String {
         let interval = current.resolvedInterval(store.settings.defaultIntervalMinutes)
         if current.isQuotaTask {
             return "一个月 \(current.quota) 次机会、每天都能抢的任务用这个：每抢到一次就点一下，"

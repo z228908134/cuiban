@@ -78,7 +78,7 @@ struct AddTaskView: View {
                     noteEditor
                 }
 
-                Section(header: Text("什么时候")) {
+                Section(header: Text("什么时候"), footer: Text(endFooter)) {
                     DatePicker(
                         "提醒时间",
                         selection: $draft.dueDate,
@@ -95,6 +95,32 @@ struct AddTaskView: View {
                             quick("明早 09:00", morningOffset())
                         }
                         .padding(.vertical, 2)
+                    }
+
+                    // 清单结束时间：这条清单 / 活动的终点。
+                    // 设了之后到点自动完成归档、催办不再越过它。
+                    Toggle(isOn: endDateToggle) {
+                        Text("清单结束时间")
+                    }
+
+                    if draft.endDate != nil {
+                        DatePicker(
+                            "结束时间",
+                            selection: endDateBinding,
+                            in: draft.dueDate...,
+                            displayedComponents: [.date, .hourAndMinute]
+                        )
+                        .environment(\.locale, Locale(identifier: "zh_CN"))
+
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                quickEnd("7 天后", Date().addingTimeInterval(7 * 86400))
+                                quickEnd("30 天后", Date().addingTimeInterval(30 * 86400))
+                                quickEnd("3 个月后", Date().addingTimeInterval(90 * 86400))
+                                quickEnd("本月底", endOfMonth())
+                            }
+                            .padding(.vertical, 2)
+                        }
                     }
                 }
 
@@ -720,6 +746,13 @@ struct AddTaskView: View {
             t.dueDate = Date().addingTimeInterval(60)
             t.snoozeUntil = nil
         }
+
+        // 结束时间必须晚于提醒时间，否则任务会在提醒那一刻就被判「活动结束」直接归档。
+        // 已经在过去的结束时间不动它 —— 那是用户主动设的「活动已结束」，交给自动收尾。
+        if let e = t.endDate, e > Date(), e <= t.dueDate {
+            t.endDate = t.dueDate.addingTimeInterval(86400)
+        }
+
         store.upsert(t)
         dismiss()
     }
@@ -759,6 +792,72 @@ struct AddTaskView: View {
             return d.timeIntervalSinceNow
         }
         return 3600
+    }
+
+    // MARK: - 清单结束时间
+
+    /// 开 / 关结束时间。打开时默认给「提醒时间 + 30 天」——
+    /// 「活动持续一月」是抢购类任务最常见的长度，先填一个再微调。
+    private var endDateToggle: Binding<Bool> {
+        Binding(
+            get: { draft.endDate != nil },
+            set: { on in
+                if on {
+                    draft.endDate = draft.dueDate.addingTimeInterval(30 * 86400)
+                } else {
+                    draft.endDate = nil
+                }
+            }
+        )
+    }
+
+    private var endDateBinding: Binding<Date> {
+        Binding(
+            get: { draft.endDate ?? draft.dueDate },
+            set: { draft.endDate = $0 }
+        )
+    }
+
+    /// 结束时间那一栏的说明文案
+    private var endFooter: String {
+        guard let e = draft.endDate else {
+            return "「清单结束时间」留空就是不设，任务一直有效。"
+                + "抢购 / 报名类活动到某天就结束的，可以打开它。"
+        }
+        return "到 \(fmt(e, "M月d日 HH:mm")) 这条清单会自动完成归档、不再提醒；"
+            + "「本周期」「每天提醒」也不会越过这个时间。"
+    }
+
+    /// 结束时间的快捷选项。一律不早于提醒时间，
+    /// 免得任务在提醒那一刻就直接归档、一次都没催。
+    private func quickEnd(_ label: String, _ value: Date) -> some View {
+        Button {
+            draft.endDate = max(draft.dueDate, value)
+        } label: {
+            Text(label)
+                .font(.app(12, weight: .medium))
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(brandColor.opacity(0.12))
+                .foregroundColor(brandColor)
+                .clipShape(Capsule())
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// 本月最后一天的 23:59
+    private func endOfMonth() -> Date {
+        let cal = Calendar.current
+        let now = Date()
+        guard let range = cal.range(of: .day, in: .month, for: now),
+              let first = cal.date(from: cal.dateComponents([.year, .month], from: now)),
+              let last = cal.date(byAdding: .day, value: range.count - 1, to: first)
+        else { return now.addingTimeInterval(30 * 86400) }
+        var c = cal.dateComponents([.year, .month, .day], from: last)
+        c.hour = 23
+        c.minute = 59
+        c.second = 0
+        return cal.date(from: c) ?? last
     }
 }
 

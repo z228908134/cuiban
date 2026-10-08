@@ -27,8 +27,8 @@ targets:
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations:
           - zh-Hans
-        CFBundleShortVersionString: "1.16.0"
-        CFBundleVersion: "60"
+        CFBundleShortVersionString: "1.17.0"
+        CFBundleVersion: "61"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
@@ -53,5 +53,5 @@ targets:
         PRODUCT_NAME: Cuiban
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "60"
-        MARKETING_VERSION: "1.16.0"
+        CURRENT_PROJECT_VERSION: "61"
+        MARKETING_VERSION: "1.17.0"

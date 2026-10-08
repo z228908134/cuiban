@@ -212,6 +212,10 @@ enum NotificationScheduler {
         }
 
         for i in 0..<limit {
+            // 清单结束时间之后不再提醒：到了终点这条清单就该归档了，
+            // 排出去的催促只会让人以为「活动还没结束」。
+            if let e = task.endDate, fire > e { break }
+
             // 已抢到：每日提醒不越过下次机会时刻。
             // 机会很密时（例如「每 3 天一轮」）这条可能压根排不上，那就不排 ——
             // 反正到点 AlarmLoop 会把任务收起重回高频催抢，提前插一条

@@ -54,6 +54,14 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var lastNagAt: Date? = nil
     /// 延后到这个时间之前不再打扰
     var snoozeUntil: Date? = nil
+    /// 清单结束时间（这条清单 / 活动的终点）。nil = 不设，任务一直有效。
+    ///
+    /// 设了之后：
+    ///   · 到这个时间任务自动完成、进「已完成」，**不再生成下一轮**；
+    ///   · 「本周期至」「每天提醒至」都不会越过它（hitDeadline 会被夹住）；
+    ///   · 催办通知不会排到这个时间之后；
+    ///   · 日历上的重复推算也不会再往后投。
+    var endDate: Date? = nil
     /// 「已抢到」的时间（本周期第一次抢到的时刻）。
     /// 单次机会型里非 nil 就是「已抢到」；配额型里只用于展示，进度看 hitCount。
     var hitAt: Date? = nil
@@ -76,6 +84,15 @@ struct TaskItem: Identifiable, Codable, Equatable {
     /// 已经抢到过至少一次
     var isHit: Bool { hitCount > 0 || hitAt != nil }
 
+    /// 设了清单结束时间
+    var hasEndDate: Bool { endDate != nil }
+
+    /// 是否已经过了清单结束时间（活动结束）
+    func hasEnded(at now: Date = Date()) -> Bool {
+        guard let e = endDate else { return false }
+        return e <= now
+    }
+
     /// 本周期配额已抢满
     var isQuotaFull: Bool { isQuotaTask && hitCount >= quota }
 
@@ -90,8 +107,10 @@ struct TaskItem: Identifiable, Codable, Equatable {
 
     /// 本周期是否已经该收尾（到了下个周期起点）。
     /// 单次机会型：抢到后到下次机会时刻收起；配额型：到月底不管抢没抢满都作废重来。
+    /// 设了清单结束时间的：到点一律收尾（活动结束），不再分是不是抢购类。
     func shouldRollOver(at now: Date) -> Bool {
         guard !isDone else { return false }
+        if let e = endDate { return e <= now }
         guard inHitGroup || isQuotaTask else { return false }
         return hitDeadline <= now
     }
@@ -104,10 +123,17 @@ struct TaskItem: Identifiable, Codable, Equatable {
     /// · 单次机会型 + 重复任务：按重复规则往后一步（「每月 1 号」→ 下月 1 号）。
     /// · 配额型：周期固定为一个月（「一月 N 次」），到月底作废、下月重来。
     /// · 不重复的：按「一个月」算（活动持续一月的场景），到点自动收尾。
+    /// · 设了清单结束时间的：结果再长也长不过它 —— 结束时间就是活动终点。
     var hitDeadline: Date {
-        if repeatMode.recurs && !isQuotaTask { return stepForward(from: dueDate) }
-        return Calendar.current.date(byAdding: .month, value: 1, to: dueDate)
-            ?? dueDate.addingTimeInterval(2592000)
+        let raw: Date
+        if repeatMode.recurs && !isQuotaTask {
+            raw = stepForward(from: dueDate)
+        } else {
+            raw = Calendar.current.date(byAdding: .month, value: 1, to: dueDate)
+                ?? dueDate.addingTimeInterval(2592000)
+        }
+        if let e = endDate, e < raw { return e }
+        return raw
     }
 
     func resolvedInterval(_ fallback: Int) -> Int {
@@ -226,6 +252,8 @@ struct TaskItem: Identifiable, Codable, Equatable {
     /// 从当前到期时间开始，按重复规则推算出 `end` 之前的每一次日期（不含已完成的）
     func projectedDates(until end: Date, maxCount: Int = 400) -> [Date] {
         guard repeatMode.recurs, !isDone else { return [] }
+        // 设了清单结束时间：日历上的推算到活动终点为止，不再往后投
+        let limit = endDate.map { min(end, $0) } ?? end
         let cal = Calendar.current
         let now = Date()
         var d = effectiveDue
@@ -237,7 +265,7 @@ struct TaskItem: Identifiable, Codable, Equatable {
             guardCount += 1
         }
         var out: [Date] = []
-        while d < end && guardCount < maxCount {
+        while d < limit && guardCount < maxCount {
             out.append(d)
             let next = stepForward(from: d, calendar: cal)
             if next <= d { break }
@@ -253,7 +281,7 @@ extension TaskItem {
     enum CodingKeys: String, CodingKey {
         case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays, photos,
              isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil, hitAt,
-             dayInterval, monthDays, hitCount, quota
+             dayInterval, monthDays, hitCount, quota, endDate
     }
 
     init(from decoder: Decoder) throws {
@@ -275,6 +303,7 @@ extension TaskItem {
         nagCount = try c.decodeIfPresent(Int.self, forKey: .nagCount) ?? d.nagCount
         lastNagAt = try c.decodeIfPresent(Date.self, forKey: .lastNagAt)
         snoozeUntil = try c.decodeIfPresent(Date.self, forKey: .snoozeUntil)
+        endDate = try c.decodeIfPresent(Date.self, forKey: .endDate)
         hitAt = try c.decodeIfPresent(Date.self, forKey: .hitAt)
         hitCount = try c.decodeIfPresent(Int.self, forKey: .hitCount) ?? d.hitCount
         quota = try c.decodeIfPresent(Int.self, forKey: .quota) ?? d.quota
@@ -530,12 +559,17 @@ final class TaskStore: ObservableObject {
         // 配额型任务和重复任务都要把下一轮排出来：
         //   重复任务 → 按重复规则算下一次机会；
         //   配额型   → 周期固定一个月，下一轮就是「本周期起点 + 1 个月」。
+        // 但清单已经结束的除外：结束时间就是整条清单的终点，不再开新的一轮。
         var next: Date? = nil
-        if old.isQuotaTask {
+        if old.hasEnded() {
+            next = nil
+        } else if old.isQuotaTask {
             next = old.hitDeadline
         } else if old.repeatMode.recurs {
             next = nextOccurrence(of: old, floor: nextFloor ?? Date())
         }
+        // 推算出来的下一轮如果已经越过结束时间，那它根本不会开始，别排了
+        if let e = old.endDate, let n = next, n > e { next = nil }
         if let next = next {
             var n = old
             n.id = UUID().uuidString
@@ -622,10 +656,11 @@ final class TaskStore: ObservableObject {
         NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
     }
 
-    /// 已抢到的任务到了下次机会时刻：自动收起这一条。
+    /// 「已抢到」的任务到了下次机会时刻：自动收起这一条。
+    /// 设了清单结束时间的任务到了结束时刻，同样由这里收尾（自动完成归档）。
     ///
     /// 走完 complete() 就会把下一条排出来（重复任务），新任务从「未抢到」
-    /// 起步继续高频催抢；不重复的任务则就此完成，不再每天提醒。
+    /// 起步继续高频催抢；不重复的任务、以及活动已经结束的任务则就此完成，不再提醒。
     /// AlarmLoop 每 30 秒会 call 一次，所以先把要收起的 id 收集完再动数组 ——
     /// complete 会往 tasks 里 append 下一条，边遍历边改容易出岔子。
     func rollOverHitTasks() {
