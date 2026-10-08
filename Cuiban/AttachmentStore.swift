@@ -67,11 +67,11 @@ enum AttachmentStore {
     private static let b64Cache = NSCache<NSString, NSString>()
 
     static func base64(_ name: String) -> String? {
-        if let hit = b64Cache.object(forKey: name as NSString) { return hit }
+        if let hit = b64Cache.object(forKey: name as NSString) { return hit as String }
         guard let data = try? Data(contentsOf: url(name)) else { return nil }
-        let s = data.base64EncodedString() as NSString
-        b64Cache.setObject(s, forKey: name as NSString)
-        return s as String
+        let s = data.base64EncodedString()
+        b64Cache.setObject(s as NSString, forKey: name as NSString)
+        return s
     }
 
     // MARK: 删除
