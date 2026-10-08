@@ -11,8 +11,15 @@ struct NoteStyle: Codable, Equatable {
     var i: Bool = false // 斜体
     var u: Bool = false // 下划线
     var s: Bool = false // 删除线
-    var h: Bool = false // 高亮底色
+    var h: Bool = false // 高亮底色（老版本只有「有没有高亮」，颜色记在后面 hc）
     var m: Bool = false // 等宽（代码）
+    /// 字色名（red / orange / green / blue / gray）；nil = 跟随系统黑白
+    var c: String? = nil
+    /// 高亮色名（yellow / green / blue / pink）。
+    /// 老数据只有 h 没有 hc，渲染时按 yellow 处理 —— 加了多色高亮也不能让旧笔记变样
+    var hc: String? = nil
+    /// 字号倍数，只在样式面板里调（0.85 / 1.00 / 1.15 / 1.30 / 1.45）；nil = 1.0
+    var z: Double? = nil
 
     static func encode(_ list: [NoteStyle]) -> String {
         guard let d = try? JSONEncoder().encode(list) else { return "[]" }
@@ -24,6 +31,65 @@ struct NoteStyle: Codable, Equatable {
               let list = try? JSONDecoder().decode([NoteStyle].self, from: d) else { return [] }
         return list
     }
+}
+
+// MARK: - 正文调色板
+
+/// 笔记正文的字色 / 高亮色。
+/// 全部走动态色（UIColor { trait }）：深色模式下换成同色系更亮的版本，
+/// 否则浅色字在暗底上会糊成一团、深色高亮块也会把字压没。
+/// 名字（"red" 等）是存进 NoteStyle 的标识，改颜色只要改这里。
+enum NoteColors {
+    /// 字色（面板里第一个「默认」不在这个数组里，单独画）
+    static let textNames = ["red", "orange", "green", "blue", "gray"]
+    /// 高亮色
+    static let highlightNames = ["yellow", "green", "blue", "pink"]
+
+    static func text(_ name: String?) -> UIColor? {
+        switch name {
+        case "red":    return dyn(0xE24B4A, 0xF09595)
+        case "orange": return dyn(0xBA7517, 0xEF9F27)
+        case "green":  return dyn(0x1D9E75, 0x5DCAA5)
+        case "blue":   return dyn(0x378ADD, 0x85B7EB)
+        case "gray":   return dyn(0x6B6B6B, 0xB4B2A9)
+        default:       return nil
+        }
+    }
+
+    static func highlight(_ name: String?) -> UIColor {
+        switch name {
+        case "green": return dyn(0x9FE1CB, 0x1D9E75, alpha: 0.45)
+        case "blue":  return dyn(0xB5D4F4, 0x378ADD, alpha: 0.45)
+        case "pink":  return dyn(0xF4C0D1, 0xD4537E, alpha: 0.42)
+        default:      return dyn(0xFAC775, 0xBA7517, alpha: 0.40)  // yellow
+        }
+    }
+
+    /// SwiftUI 侧用的色块
+    static func swatch(_ name: String, highlight: Bool) -> Color {
+        if highlight { return Color(highlight(name)) }
+        return Color(text(name) ?? .label)
+    }
+
+    private static func dyn(_ light: Int, _ dark: Int, alpha: CGFloat = 1) -> UIColor {
+        UIColor { trait in
+            let hex = trait.userInterfaceStyle == .dark ? dark : light
+            return UIColor(red: CGFloat((hex >> 16) & 0xFF) / 255.0,
+                           green: CGFloat((hex >> 8) & 0xFF) / 255.0,
+                           blue: CGFloat(hex & 0xFF) / 255.0,
+                           alpha: alpha)
+        }
+    }
+}
+
+/// 从样式 token 集合里取「取值型」token 的值："c:red" → "red"。
+/// 布尔型样式（b/i/u/s/m）继续用集合本身判断，
+/// 字色 / 高亮色 / 字号这类带值的则统一编成 "kind:value" 塞进同一个集合 ——
+/// 这样选区求交集（工具栏高亮态）、增删文字后的区间平移都能直接复用原有实现。
+func styleTokenValue(_ set: Set<String>, _ kind: String) -> String? {
+    let prefix = kind + ":"
+    guard let t = set.first(where: { $0.hasPrefix(prefix) }) else { return nil }
+    return String(t.dropFirst(prefix.count))
 }
 
 // MARK: - 笔记列表
@@ -202,6 +268,8 @@ struct NoteEditorView: View {
     @State private var activeTraits: Set<String> = []
     @State private var photoSource: PhotoSource? = nil
     @State private var showTemplates = false
+    /// 「样式」面板（点工具栏的 T 展开：加粗/斜体/下划线/字号/字色/高亮色）
+    @State private var showStylePanel = false
     /// 「存为模板」的命名弹窗
     @State private var saveAsTemplateSheet = false
     @State private var bridge: TextEditBridge
@@ -261,8 +329,14 @@ struct NoteEditorView: View {
 
                 Divider()
 
-                // 格式工具栏（参考滴答清单）
-                formatBar
+                // 格式工具栏（参考滴答清单）+ 可展开的样式面板
+                VStack(spacing: 0) {
+                    if showStylePanel {
+                        stylePanel
+                        Divider()
+                    }
+                    formatBar
+                }
             }
             .navigationTitle(note == nil ? "新建笔记" : "编辑笔记")
             .navigationBarTitleDisplayMode(.inline)
@@ -353,15 +427,16 @@ struct NoteEditorView: View {
     private var formatBar: some View {
         HStack(spacing: 0) {
             barIcon("photo.on.rectangle") { photoSource = .library }
-            barIcon("clock") { bridge.insert(fmt(Date(), "M月d日 HH:mm ")) }
             barIcon("arrow.uturn.backward") { bridge.undo() }
 
             barDivider
 
+            // T：展开样式面板（加粗/斜体/下划线/字号/字色/高亮色）
+            barText("T", active: showStylePanel) {
+                withAnimation(.easeInOut(duration: 0.16)) { showStylePanel.toggle() }
+            }
             barText("H") { bridge.toggleLinePrefix("# ") }
             barText("B", active: activeTraits.contains("b")) { bridge.toggle("b") }
-            barText("S", strike: true, active: activeTraits.contains("s")) { bridge.toggle("s") }
-            barIcon("highlighter", active: activeTraits.contains("h")) { bridge.toggle("h") }
 
             barDivider
 
@@ -374,13 +449,132 @@ struct NoteEditorView: View {
         .padding(.horizontal, 2)
     }
 
+    // MARK: 样式面板（点 T 展开）
+
+    /// 参考用户给的参考图：样式 [B][I][U] + Aa 字号滑杆 + 一排颜色点（字色 / 高亮色）。
+    /// 面板放在工具栏正上方而不是弹 sheet —— 弹 sheet 会把键盘收起，
+    /// 选完颜色还得再点回正文，来回很别扭。
+    private var stylePanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                traitPill("B", bold: true, on: activeTraits.contains("b")) { bridge.toggle("b") }
+                traitPill("I", italic: true, on: activeTraits.contains("i")) { bridge.toggle("i") }
+                traitPill("U", underline: true, on: activeTraits.contains("u")) { bridge.toggle("u") }
+                traitPill("S", strike: true, on: activeTraits.contains("s")) { bridge.toggle("s") }
+            }
+
+            HStack(spacing: 12) {
+                Text("Aa").font(.app(12)).foregroundColor(.secondary)
+                Slider(value: fontSizeBinding, in: 0.85...1.45, step: 0.15)
+                    .tint(.accentColor)
+                Text("Aa").font(.app(20)).foregroundColor(.secondary)
+            }
+            .frame(height: 30)
+
+            colorRow(title: "字色",
+                     names: NoteColors.textNames,
+                     current: styleTokenValue(activeTraits, "c"),
+                     noneLabel: "默认") { name in
+                bridge.applyValue("c", name)
+            }
+
+            colorRow(title: "高亮",
+                     names: NoteColors.highlightNames,
+                     current: styleTokenValue(activeTraits, "hl"),
+                     noneLabel: "无",
+                     highlight: true) { name in
+                bridge.applyValue("hl", name)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.top, 10)
+        .padding(.bottom, 8)
+    }
+
+    /// 字号滑杆：读当前选区的字号倍数，写回时 1.0 直接清掉（不存多余字段）
+    private var fontSizeBinding: Binding<Double> {
+        Binding(
+            get: { Double(styleTokenValue(activeTraits, "z") ?? "") ?? 1.0 },
+            set: { v in
+                let r = (v * 100).rounded() / 100
+                bridge.applyValue("z", r == 1 ? nil : String(format: "%.2f", r))
+            }
+        )
+    }
+
+    /// 一排颜色点：第一个永远是「默认 / 无」
+    private func colorRow(title: String, names: [String], current: String?,
+                          noneLabel: String, highlight: Bool = false,
+                          action: @escaping (String?) -> Void) -> some View {
+        HStack(spacing: 10) {
+            Text(title)
+                .font(.app(12))
+                .foregroundColor(.secondary)
+                .frame(width: 26, alignment: .leading)
+            dot(name: nil, label: noneLabel, on: current == nil, highlight: highlight) { action(nil) }
+            ForEach(names, id: \.self) { n in
+                dot(name: n, label: nil, on: current == n, highlight: highlight) { action(n) }
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func dot(name: String?, label: String?, on: Bool,
+                     highlight: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            ZStack {
+                Circle()
+                    .stroke(Color.primary.opacity(on ? 0.65 : 0.10),
+                            lineWidth: on ? 2 : 0.8)
+                    .frame(width: 30, height: 30)
+                if let name = name {
+                    Circle()
+                        .fill(NoteColors.swatch(name, highlight: highlight))
+                        .frame(width: 21, height: 21)
+                } else {
+                    // 「默认 / 无」：灰底 + 一道斜杠，表示「不上色」
+                    ZStack {
+                        Circle().fill(Color.primary.opacity(0.06)).frame(width: 21, height: 21)
+                        Rectangle()
+                            .fill(Color.primary.opacity(0.45))
+                            .frame(width: 15, height: 1.4)
+                            .rotationEffect(.degrees(-45))
+                    }
+                    .frame(width: 21, height: 21)
+                }
+            }
+            .frame(width: 32, height: 34)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label ?? name ?? "默认")
+    }
+
+    /// 面板里的样式胶囊（加粗 / 斜体 / 下划线 / 删除线）
+    private func traitPill(_ label: String, bold: Bool = false, italic: Bool = false,
+                           underline: Bool = false, strike: Bool = false,
+                           on: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.app(16, weight: bold || on ? .semibold : .regular))
+                .italic(italic)
+                .underline(underline)
+                .strikethrough(strike)
+                .foregroundColor(on ? .white : .primary)
+                .frame(maxWidth: .infinity, minHeight: 34)
+                .background(
+                    RoundedRectangle(cornerRadius: 17)
+                        .fill(on ? Color.accentColor : Color.primary.opacity(0.07))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
     /// 右端 ∨：其余全部功能收进菜单（滴答同款折叠）
     private var moreMenu: some View {
         Menu {
             Button { bridge.redo() } label: { Label("重做", systemImage: "arrow.uturn.forward") }
             Divider()
-            Button { bridge.toggle("i") } label: { Label("斜体", systemImage: "textformat.italic") }
-            Button { bridge.toggle("u") } label: { Label("下划线", systemImage: "underline") }
+            Button { bridge.insert(fmt(Date(), "M月d日 HH:mm ")) } label: { Label("插入时间", systemImage: "clock") }
             Button { bridge.toggle("m") } label: { Label("代码", systemImage: "curlybraces") }
             Button { bridge.toggleLinePrefix("> ") } label: { Label("引用", systemImage: "text.quote") }
             Button { bridge.wrap("[", "](https://)") } label: { Label("链接", systemImage: "link") }
@@ -661,33 +855,36 @@ struct NoteBodyEditor: UIViewRepresentable {
 
     // MARK: 样式渲染
 
-    /// 由样式特征生成字体（加粗/斜体/等宽可叠加）
-    static func fontFor(bold: Bool, italic: Bool, mono: Bool) -> UIFont {
+    /// 由样式特征生成字体（加粗/斜体/等宽可叠加，字号可由样式面板缩放）
+    static func fontFor(bold: Bool, italic: Bool, mono: Bool, scale: Double = 1) -> UIFont {
         var d = baseFont.fontDescriptor
         if mono { d = d.withDesign(.monospaced) ?? d }
         var traits: UIFontDescriptor.SymbolicTraits = []
         if bold { traits.insert(.traitBold) }
         if italic { traits.insert(.traitItalic) }
         if let nd = d.withSymbolicTraits(traits) { d = nd }
-        return UIFont(descriptor: d, size: baseFont.pointSize)
+        let s = scale > 0 ? CGFloat(scale) : 1
+        return UIFont(descriptor: d, size: baseFont.pointSize * s)
     }
 
     /// 给某个样式集合生成属性字典（打字属性也复用）
     static func attrsFor(_ traits: Set<String>) -> [NSAttributedString.Key: Any] {
+        let scale = Double(styleTokenValue(traits, "z") ?? "") ?? 1
         var tp: [NSAttributedString.Key: Any] = [
-            .font: baseFont,
-            .foregroundColor: UIColor.label,
+            .font: fontFor(bold: false, italic: false, mono: false, scale: scale),
+            .foregroundColor: NoteColors.text(styleTokenValue(traits, "c")) ?? UIColor.label,
             .paragraphStyle: paragraphStyle()
         ]
         if traits.contains("b") || traits.contains("i") || traits.contains("m") {
             tp[.font] = fontFor(bold: traits.contains("b"),
                                 italic: traits.contains("i"),
-                                mono: traits.contains("m"))
+                                mono: traits.contains("m"),
+                                scale: scale)
         }
         if traits.contains("u") { tp[.underlineStyle] = NSUnderlineStyle.single.rawValue }
         if traits.contains("s") { tp[.strikethroughStyle] = NSUnderlineStyle.single.rawValue }
-        if traits.contains("h") {
-            tp[.backgroundColor] = UIColor.systemYellow.withAlphaComponent(0.35)
+        if let hl = styleTokenValue(traits, "hl") ?? (traits.contains("h") ? "yellow" : nil) {
+            tp[.backgroundColor] = NoteColors.highlight(hl)
         }
         return tp
     }
@@ -759,20 +956,28 @@ struct NoteBodyEditor: UIViewRepresentable {
             loc = lr.location + lr.length
         }
 
-        // 富文本样式（真加粗/斜体/下划线/删除线/高亮/等宽）
+        // 富文本样式（真加粗/斜体/下划线/删除线/高亮/等宽/字色/字号）
         for st in styles {
             guard st.n > 0, st.l >= 0, st.l < attr.length else { continue }
             let len = min(st.n, attr.length - st.l)
             guard len > 0 else { continue }
             let rng = NSRange(location: st.l, length: len)
-            if st.b || st.i || st.m {
-                attr.addAttribute(.font, value: fontFor(bold: st.b, italic: st.i, mono: st.m), range: rng)
+            let scale = st.z ?? 1
+            if st.b || st.i || st.m || scale != 1 {
+                attr.addAttribute(.font,
+                                  value: fontFor(bold: st.b, italic: st.i, mono: st.m, scale: scale),
+                                  range: rng)
             }
             if st.u { attr.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
             if st.s { attr.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
-            if st.h {
+            // 字色只在这里覆盖：上面行级那遍（勾选置灰/引用变灰）先铺底，
+            // 用户显式选的颜色优先 —— 不然勾了勾选框再选颜色，颜色会被灰盖掉
+            if let c = st.c, let col = NoteColors.text(c) {
+                attr.addAttribute(.foregroundColor, value: col, range: rng)
+            }
+            if st.h || st.hc != nil {
                 attr.addAttribute(.backgroundColor,
-                                  value: UIColor.systemYellow.withAlphaComponent(0.35),
+                                  value: NoteColors.highlight(st.hc),
                                   range: rng)
             }
         }
@@ -974,8 +1179,11 @@ final class TextEditBridge {
             if st.i { t.insert("i") }
             if st.u { t.insert("u") }
             if st.s { t.insert("s") }
-            if st.h { t.insert("h") }
             if st.m { t.insert("m") }
+            // 老笔记的高亮只有 h、没有颜色名 → 按默认黄处理
+            if st.h || st.hc != nil { t.insert("hl:" + (st.hc ?? "yellow")) }
+            if let c = st.c { t.insert("c:" + c) }
+            if let z = st.z, z != 1 { t.insert("z:" + String(format: "%.2f", z)) }
         }
         return t
     }
@@ -1035,6 +1243,49 @@ final class TextEditBridge {
 
     func notifyStylesChanged() {
         onStylesChanged?(NoteStyle.encode(styles))
+    }
+
+    /// 去掉某个「取值型」样式（字色 / 高亮色 / 字号）的全部 token
+    private static func stripping(_ set: Set<String>, _ kind: String) -> Set<String> {
+        let prefix = kind + ":"
+        var out = Set<String>()
+        for t in set where !t.hasPrefix(prefix) { out.insert(t) }
+        return out
+    }
+
+    /// 「取值型」样式：kind = "c"（字色）/ "hl"（高亮色）/ "z"（字号倍数），
+    /// value = nil 表示清除该类样式（字色回到默认黑白、高亮取消、字号回标准）。
+    /// 和 toggle 一样：有选区改选区，没选区改「下一个输入」。
+    /// 同一类只留一个值 —— 选过一次红再选蓝，应该变成蓝而不是两个都在。
+    func applyValue(_ kind: String, _ value: String?) {
+        guard let tv = textView else { return }
+        syncPlain(tv)
+        let ns = tv.text as NSString
+        let r = tv.selectedRange
+        let token = value.map { "\(kind):\($0)" }
+        if r.length > 0, r.location + r.length <= ns.length {
+            var map: [Int: Set<String>] = [:]
+            for idx in 0..<ns.length {
+                let t = traits(at: idx)
+                if !t.isEmpty { map[idx] = t }
+            }
+            for idx in r.location..<(r.location + r.length) {
+                var t = Self.stripping(map[idx] ?? [], kind)
+                if let token = token { t.insert(token) }
+                map[idx] = t
+            }
+            styles = Self.normalize(map, length: ns.length)
+            notifyStylesChanged()
+            syncSelectionUI(tv)
+            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+            record(tv)
+            onEdited?(NoteBodyEditor.plainText(tv.attributedText))
+        } else {
+            pendingTraits = Self.stripping(pendingTraits, kind)
+            if let token = token { pendingTraits.insert(token) }
+            onSelectionChanged?(pendingTraits)
+            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+        }
     }
 
     /// 打字后把「下一个输入」样式落到新输入的区间
@@ -1117,8 +1368,18 @@ final class TextEditBridge {
                 v.i = t.contains("i")
                 v.u = t.contains("u")
                 v.s = t.contains("s")
-                v.h = t.contains("h")
                 v.m = t.contains("m")
+                // 高亮：颜色名在 hc 里，老数据的 h 继续认
+                if let hl = styleTokenValue(t, "hl") {
+                    v.h = true
+                    v.hc = hl
+                } else {
+                    v.h = t.contains("h")
+                }
+                v.c = styleTokenValue(t, "c")
+                if let zs = styleTokenValue(t, "z"), let z = Double(zs), z != 1 {
+                    v.z = z
+                }
                 cur = v
                 curSet = t
             }
