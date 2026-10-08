@@ -487,10 +487,10 @@ struct NoteEditorView: View {
     private var stylePanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                traitPill("B", bold: true, on: activeTraits.contains("b")) { bridge.toggle("b") }
-                traitPill("I", italic: true, on: activeTraits.contains("i")) { bridge.toggle("i") }
-                traitPill("U", underline: true, on: activeTraits.contains("u")) { bridge.toggle("u") }
-                traitPill("S", strike: true, on: activeTraits.contains("s")) { bridge.toggle("s") }
+                traitPill("B", bold: true, on: activeTraits.contains("b")) { applyAndTuck { bridge.toggle("b") } }
+                traitPill("I", italic: true, on: activeTraits.contains("i")) { applyAndTuck { bridge.toggle("i") } }
+                traitPill("U", underline: true, on: activeTraits.contains("u")) { applyAndTuck { bridge.toggle("u") } }
+                traitPill("S", strike: true, on: activeTraits.contains("s")) { applyAndTuck { bridge.toggle("s") } }
             }
 
             HStack(spacing: 12) {
@@ -505,7 +505,7 @@ struct NoteEditorView: View {
                      names: NoteColors.textNames,
                      current: styleTokenValue(activeTraits, "c"),
                      noneLabel: "默认") { name in
-                bridge.applyValue("c", name)
+                applyAndTuck { bridge.applyValue("c", name) }
             }
 
             colorRow(title: "高亮",
@@ -513,12 +513,24 @@ struct NoteEditorView: View {
                      current: styleTokenValue(activeTraits, "hl"),
                      noneLabel: "无",
                      background: true) { name in
-                bridge.applyValue("hl", name)
+                applyAndTuck { bridge.applyValue("hl", name) }
             }
         }
         .padding(.horizontal, 14)
         .padding(.top, 10)
         .padding(.bottom, 8)
+    }
+
+    /// 面板操作的统一收尾：样式/颜色落到选区上之后，把键盘收起来。
+    ///
+    /// 不收的后果就是用户截图那个 bug：键盘占着半屏，正文可视区只剩一小条，
+    /// 应用样式那一刻 UITextView 会把选区滚回可视区，整篇内容被顶得上滑。
+    /// 没有选区（在给「下一个输入」设样式）时不动键盘——那个场景用户多半正要打字。
+    private func applyAndTuck(_ action: () -> Void) {
+        action()
+        if (bridge.textView?.selectedRange.length ?? 0) > 0 {
+            hideKeyboard()
+        }
     }
 
     /// 字号滑杆：读当前选区的字号倍数，写回时 1.0 直接清掉（不存多余字段）
@@ -527,7 +539,7 @@ struct NoteEditorView: View {
             get: { Double(styleTokenValue(activeTraits, "z") ?? "") ?? 1.0 },
             set: { v in
                 let r = (v * 100).rounded() / 100
-                bridge.applyValue("z", r == 1 ? nil : String(format: "%.2f", r))
+                applyAndTuck { bridge.applyValue("z", r == 1 ? nil : String(format: "%.2f", r)) }
             }
         )
     }
