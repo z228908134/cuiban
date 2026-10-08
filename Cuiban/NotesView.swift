@@ -915,7 +915,8 @@ struct NoteBodyEditor: UIViewRepresentable {
         guard tv.markedTextRange == nil else { return }
         // tv.text 里的附件占位符换回标记字符后再比较
         if Self.plainText(tv.attributedText) != text {
-            tv.text = text
+            // 回写整篇时也要保住滚动位置，否则正文一长就跳（见 keepScroll 注释）
+            keepScroll(tv) { tv.text = text }
             NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         }
     }
@@ -975,6 +976,37 @@ struct NoteBodyEditor: UIViewRepresentable {
             tp[.backgroundColor] = NoteColors.highlight(hl)
         }
         return tp
+    }
+
+    /// 重设内容时把滚动位置与光标原样放回去。
+    ///
+    /// UITextView 每次重设 `text` / `attributedText` 都会丢掉 contentOffset：
+    /// 正文一超过一屏，每敲一个字整篇就跳一下、光标所在位置都看不见了。
+    /// 所以凡是重设内容的路径，一律「先存 offset + 选区 → 赋值 → 还原」，
+    /// 只有在光标确实被挤出可视区时才做最小幅度滚动把它带回来。
+    static func keepScroll(_ tv: UITextView, _ body: () -> Void) {
+        let off = tv.contentOffset
+        let sel = tv.selectedRange
+        body()
+        if tv.selectedRange != sel { tv.selectedRange = sel }
+        if tv.contentOffset != off { tv.contentOffset = off }
+        scrollCaretIntoViewIfNeeded(tv, sel: sel)
+    }
+
+    /// 光标在可视区内就一点不动；被挤出可视区才最小幅度滚动
+    private static func scrollCaretIntoViewIfNeeded(_ tv: UITextView, sel: NSRange) {
+        guard tv.isFirstResponder, tv.window != nil, tv.bounds.height > 0 else { return }
+        // 刚重设过内容，先让排版跑完，caretRect 才是新位置
+        tv.layoutIfNeeded()
+        let len = (tv.text as NSString?)?.length ?? 0
+        guard let pos = tv.position(from: tv.beginningOfDocument,
+                                    offset: min(max(sel.location, 0), len)) else { return }
+        let caret = tv.caretRect(for: pos)
+        guard caret.height > 0, caret.height.isFinite, caret.origin.y.isFinite else { return }
+        let visible = CGRect(origin: tv.contentOffset, size: tv.bounds.size).insetBy(dx: 0, dy: 14)
+        if !visible.contains(CGPoint(x: caret.midX, y: caret.midY)) {
+            tv.scrollRectToVisible(caret.insetBy(dx: 0, dy: -20), animated: false)
+        }
     }
 
     /// 给正文上样式：
@@ -1070,10 +1102,11 @@ struct NoteBodyEditor: UIViewRepresentable {
             }
         }
 
-        let sel = tv.selectedRange
-        tv.attributedText = attr
-        tv.typingAttributes = attrsFor(pending)
-        tv.selectedRange = sel
+        // 关键：重设 attributedText 会丢 contentOffset（见 keepScroll 注释）
+        keepScroll(tv) {
+            tv.attributedText = attr
+            tv.typingAttributes = attrsFor(pending)
+        }
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -1527,8 +1560,12 @@ final class TextEditBridge {
     private func applyHistory(_ tv: UITextView) {
         let e = history[histIdx]
         suppressRecord = true
+        // 不能用 keepScroll：它会把选区还原成「调用前的选区」，
+        // 而撤销/重做要的正是历史里那个选区。这里只保住滚动位置。
+        let off = tv.contentOffset
         tv.text = e.text
         tv.selectedRange = e.sel
+        tv.contentOffset = off
         suppressRecord = false
         styles = e.styles
         notifyStylesChanged()
@@ -1780,10 +1817,13 @@ final class TextEditBridge {
         let plain = NoteBodyEditor.plainText(tv.attributedText)
         if plain != tv.text {
             // 关键：重设 text 会把选区弄丢，斜体/加粗等选区开关就作用不上；
-            // 附件占位符与标记字符长度 1:1，选区位置可以直接原样保留
+            // 附件占位符与标记字符长度 1:1，选区位置可以直接原样保留。
+            // 滚动位置同理 —— 不保住的话长笔记一操作就跳（见 keepScroll 注释）
             let sel = tv.selectedRange
-            tv.text = plain
-            tv.selectedRange = sel
+            NoteBodyEditor.keepScroll(tv) {
+                tv.text = plain
+                tv.selectedRange = sel
+            }
         }
     }
 
