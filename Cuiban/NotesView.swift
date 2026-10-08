@@ -46,6 +46,7 @@ enum NoteColors {
     static let highlightNames = ["yellow", "green", "blue", "pink"]
 
     static func text(_ name: String?) -> UIColor? {
+        if let hex = name, hex.hasPrefix("#") { return parseHex(hex) }
         switch name {
         case "red":    return dyn(0xE24B4A, 0xF09595)
         case "orange": return dyn(0xBA7517, 0xEF9F27)
@@ -57,12 +58,27 @@ enum NoteColors {
     }
 
     static func highlight(_ name: String?) -> UIColor {
+        // 自己配的颜色：原色铺底但压到 35% 透明，保证字还看得清
+        if let hex = name, hex.hasPrefix("#"), let c = parseHex(hex) {
+            return c.withAlphaComponent(0.35)
+        }
         switch name {
         case "green": return dyn(0x9FE1CB, 0x1D9E75, alpha: 0.45)
         case "blue":  return dyn(0xB5D4F4, 0x378ADD, alpha: 0.45)
         case "pink":  return dyn(0xF4C0D1, 0xD4537E, alpha: 0.42)
         default:      return dyn(0xFAC775, 0xBA7517, alpha: 0.40)  // yellow
         }
+    }
+
+    /// "#RRGGBB" → UIColor。存进 NoteStyle 的自定义色就是这个格式。
+    static func parseHex(_ hex: String) -> UIColor? {
+        var s = hex.trimmingCharacters(in: .whitespacesAndNewlines)
+        if s.hasPrefix("#") { s.removeFirst() }
+        guard s.count == 6, let v = UInt32(s, radix: 16) else { return nil }
+        return UIColor(red: CGFloat((v >> 16) & 0xFF) / 255.0,
+                       green: CGFloat((v >> 8) & 0xFF) / 255.0,
+                       blue: CGFloat(v & 0xFF) / 255.0,
+                       alpha: 1)
     }
 
     /// SwiftUI 侧用的色块。
@@ -81,6 +97,18 @@ enum NoteColors {
                            blue: CGFloat(hex & 0xFF) / 255.0,
                            alpha: alpha)
         }
+    }
+}
+
+extension UIColor {
+    /// UIColor → "#RRGGBB"，用于把用户自己配的颜色存进 NoteStyle。
+    /// 先按当前外观解析一次：动态色直接 getRed 会拿不到分量。
+    var noteHex: String? {
+        let c = resolvedColor(with: UITraitCollection.current)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        guard c.getRed(&r, &g, &b, &a) else { return nil }
+        return String(format: "#%02X%02X%02X",
+                      Int((r * 255).rounded()), Int((g * 255).rounded()), Int((b * 255).rounded()))
     }
 }
 
@@ -484,7 +512,7 @@ struct NoteEditorView: View {
                      names: NoteColors.highlightNames,
                      current: styleTokenValue(activeTraits, "hl"),
                      noneLabel: "无",
-                     highlight: true) { name in
+                     background: true) { name in
                 bridge.applyValue("hl", name)
             }
         }
@@ -504,21 +532,57 @@ struct NoteEditorView: View {
         )
     }
 
-    /// 一排颜色点：第一个永远是「默认 / 无」
+    /// 一排颜色点：第一个永远是「默认 / 无」，最后一个是「自己配」（系统取色器）
     private func colorRow(title: String, names: [String], current: String?,
-                          noneLabel: String, highlight: Bool = false,
+                          noneLabel: String, background: Bool = false,
                           action: @escaping (String?) -> Void) -> some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
             Text(title)
                 .font(.app(12))
                 .foregroundColor(.secondary)
                 .frame(width: 26, alignment: .leading)
-            dot(name: nil, label: noneLabel, on: current == nil, highlight: highlight) { action(nil) }
+            dot(name: nil, label: noneLabel, on: current == nil, highlight: background) { action(nil) }
             ForEach(names, id: \.self) { n in
-                dot(name: n, label: nil, on: current == n, highlight: highlight) { action(n) }
+                dot(name: n, label: nil, on: current == n, highlight: background) { action(n) }
             }
+            customDot(current: current, background: background) { hex in action(hex) }
             Spacer(minLength: 0)
         }
+    }
+
+    /// 最后一个「彩虹圈」：点开系统取色器，随便调（色盘 / 滑杆 / 吸管都行）。
+    /// 自己配的颜色存成 "#RRGGBB" 塞进同一个样式字段 —— 和预设色走完全一样的存取路径。
+    private func customDot(current: String?, background: Bool,
+                           apply: @escaping (String) -> Void) -> some View {
+        let isCustom = (current ?? "").hasPrefix("#")
+        return ZStack {
+            if isCustom {
+                Circle()
+                    .stroke(Color.primary.opacity(0.65), lineWidth: 2)
+                    .frame(width: 30, height: 30)
+            } else {
+                // 没配过色时画一圈彩虹，提示「这里能自己调」
+                Circle()
+                    .strokeBorder(AngularGradient(
+                        colors: [.red, .orange, .yellow, .green, .blue, .purple, .red],
+                        center: .center), lineWidth: 2)
+                    .frame(width: 30, height: 30)
+            }
+            ColorPicker("", selection: Binding(
+                get: {
+                    if let cur = current, cur.hasPrefix("#"),
+                       let ui = NoteColors.parseHex(cur) { return Color(ui) }
+                    return background ? NoteColors.swatch("yellow", background: true) : Color.primary
+                },
+                set: { c in
+                    if let hex = UIColor(c).noteHex { apply(hex) }
+                }
+            ), supportsOpacity: false)
+            .labelsHidden()
+            .frame(width: 26, height: 26)
+        }
+        .frame(width: 32, height: 32)
+        .accessibilityLabel("自己配色")
     }
 
     private func dot(name: String?, label: String?, on: Bool,
@@ -545,7 +609,7 @@ struct NoteEditorView: View {
                     .frame(width: 21, height: 21)
                 }
             }
-            .frame(width: 32, height: 34)
+            .frame(width: 32, height: 32)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label ?? name ?? "默认")
@@ -857,16 +921,26 @@ struct NoteBodyEditor: UIViewRepresentable {
 
     // MARK: 样式渲染
 
-    /// 由样式特征生成字体（加粗/斜体/等宽可叠加，字号可由样式面板缩放）
+    /// 由样式特征生成字体（加粗/斜体/等宽可叠加，字号可由样式面板缩放）。
+    ///
+    /// 斜体必须从 `italicSystemFont` 出发：系统字体上
+    /// `descriptor.withSymbolicTraits(.traitItalic)` 经常「答应得好好的」，
+    /// 但拿回来的字体其实还是正体（face 仍是 Regular），界面看着就是「点了没反应」。
+    /// 所以这里不再依赖它 —— 要斜体就直接换成系统斜体字，加粗只是尽力而为。
     static func fontFor(bold: Bool, italic: Bool, mono: Bool, scale: Double = 1) -> UIFont {
-        var d = baseFont.fontDescriptor
-        if mono { d = d.withDesign(.monospaced) ?? d }
-        var traits: UIFontDescriptor.SymbolicTraits = []
-        if bold { traits.insert(.traitBold) }
-        if italic { traits.insert(.traitItalic) }
-        if let nd = d.withSymbolicTraits(traits) { d = nd }
-        let s = scale > 0 ? CGFloat(scale) : 1
-        return UIFont(descriptor: d, size: baseFont.pointSize * s)
+        let size = baseFont.pointSize * CGFloat(scale > 0 ? scale : 1)
+        if italic {
+            var f = UIFont.italicSystemFont(ofSize: size)
+            if bold,
+               let d = f.fontDescriptor.withSymbolicTraits([.traitBold, .traitItalic]) {
+                let b = UIFont(descriptor: d, size: size)
+                if b.fontDescriptor.symbolicTraits.contains(.traitItalic) { f = b }
+            }
+            return f
+        }
+        let base = UIFont.systemFont(ofSize: size, weight: bold ? .semibold : .regular)
+        guard mono, let d = base.fontDescriptor.withDesign(.monospaced) else { return base }
+        return UIFont(descriptor: d, size: size)
     }
 
     /// 给某个样式集合生成属性字典（打字属性也复用）
