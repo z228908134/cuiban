@@ -993,6 +993,15 @@ struct NoteBodyEditor: UIViewRepresentable {
         scrollCaretIntoViewIfNeeded(tv, sel: sel)
     }
 
+    /// 只保住滚动位置，**不动选区** —— 给「调用方自己会设定光标」的场景用
+    /// （撤销/重做、行级操作）。用 keepScroll 的话，
+    /// 它会把选区还原成「调用前的选区」，把调用方刚设好的光标位置覆盖掉。
+    static func keepOffset(_ tv: UITextView, _ body: () -> Void) {
+        let off = tv.contentOffset
+        body()
+        if tv.contentOffset != off { tv.contentOffset = off }
+    }
+
     /// 光标在可视区内就一点不动；被挤出可视区才最小幅度滚动
     private static func scrollCaretIntoViewIfNeeded(_ tv: UITextView, sel: NSRange) {
         guard tv.isFirstResponder, tv.window != nil, tv.bounds.height > 0 else { return }
@@ -1009,104 +1018,192 @@ struct NoteBodyEditor: UIViewRepresentable {
         }
     }
 
-    /// 给正文上样式：
+    /// 正文基础属性（常规字重 + label 色 + 段落样式），整篇与局部重上样式共用
+    private static func baseAttributes() -> [NSAttributedString.Key: Any] {
+        [.font: baseFont, .foregroundColor: UIColor.label, .paragraphStyle: paragraphStyle()]
+    }
+
+    /// 单行的行级样式：
     /// 1. 行首勾选标记上盖一个画出来的方框（底下是系统字体一定有字形的 ⬜️/☑️，
     ///    万一附件没挂上，用户看到的也是一个方块字符，不会变成空白）
-    /// 2. 勾选完成的待办整句删除线变灰、# 标题加粗、> 引用变灰（行级）
-    /// 3. 富文本样式（加粗/斜体/下划线/删除线/高亮/等宽）按区间套上
-    /// 打字期间（输入法有 markedText 组合状态）绝不重设 attributedText。
-    static func restyle(_ tv: UITextView, styles: [NoteStyle], pending: Set<String>) {
-        guard tv.markedTextRange == nil else { return }
-        let content = tv.text ?? ""
-        let attr = NSMutableAttributedString(
-            string: content,
-            attributes: [
-                .font: Self.baseFont,
-                .foregroundColor: UIColor.label,
-                .paragraphStyle: Self.paragraphStyle()
-            ]
-        )
-        let cns = content as NSString
+    /// 2. 勾选完成的待办整句删除线变灰、# 标题加粗、> 引用变灰
+    ///
+    /// `lineRange` / `line` 都是**相对于 `attr` 自身字符串**的位置 ——
+    /// 整篇重建时 attr 就是整篇，局部重建时 attr 只是那几行，所以两种场景共用这一份实现。
+    private static func applyLineAttributes(_ attr: NSMutableAttributedString,
+                                            lineRange lr: NSRange,
+                                            line: String) {
+        let ns = attr.string as NSString
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        // 勾选框：字符本体 + 大字号，尺寸完全由字号控制（和正文差不多大）
+        let info = TextEditBridge.markInfo(in: line)
+        if let info = info, info.markLen > 0,
+           lr.location + info.loc + info.markLen <= attr.length {
+            let boxSize: CGFloat = info.checked ? 24 : 22
+            attr.addAttributes([
+                .font: UIFont.app(boxSize),
+                .foregroundColor: info.checked
+                    ? UIColor.tertiaryLabel
+                    : UIColor.label.withAlphaComponent(0.78)
+            ], range: NSRange(location: lr.location + info.loc, length: info.markLen))
+        }
+
+        if let info = info, info.checked {
+            // 已勾选：只给勾选框后面的那段文字加删除线并置灰
+            var bodyLen = lr.length - info.len
+            // 行尾换行不计入
+            if bodyLen > 0, lr.location + info.len + bodyLen - 1 < ns.length,
+               ns.character(at: lr.location + info.len + bodyLen - 1) == 0x0A {
+                bodyLen -= 1
+            }
+            if bodyLen > 0 {
+                attr.addAttributes([
+                    .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                    .strikethroughColor: UIColor.secondaryLabel,
+                    .foregroundColor: UIColor.secondaryLabel
+                ], range: NSRange(location: lr.location + info.len, length: bodyLen))
+            }
+        } else if info == nil, trimmed.hasPrefix("# ") {
+            attr.addAttribute(
+                .font,
+                value: UIFont.app(19, weight: .semibold),
+                range: NSRange(location: lr.location, length: max(lr.length - 1, 0))
+            )
+        } else if trimmed.hasPrefix("> ") {
+            attr.addAttribute(
+                .foregroundColor,
+                value: UIColor.secondaryLabel,
+                range: NSRange(location: lr.location, length: max(lr.length - 1, 0))
+            )
+        }
+    }
+
+    /// 一条区间样式（加粗/斜体/下划线/删除线/高亮/等宽/字色/字号）套到给定范围
+    private static func applyRunAttributes(_ attr: NSMutableAttributedString,
+                                           style st: NoteStyle,
+                                           range rng: NSRange) {
+        let scale = st.z ?? 1
+        if st.b || st.i || st.m || scale != 1 {
+            attr.addAttribute(.font,
+                              value: fontFor(bold: st.b, italic: st.i, mono: st.m, scale: scale),
+                              range: rng)
+        }
+        if st.u { attr.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
+        if st.s { attr.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
+        // 字色在行级那遍（勾选置灰/引用变灰）之后覆盖：
+        // 用户显式选的颜色优先 —— 不然勾了勾选框再选颜色，颜色会被灰盖掉
+        if let c = st.c, let col = NoteColors.text(c) {
+            attr.addAttribute(.foregroundColor, value: col, range: rng)
+        }
+        if st.h || st.hc != nil {
+            attr.addAttribute(.backgroundColor, value: NoteColors.highlight(st.hc), range: rng)
+        }
+    }
+
+    /// 把一段文本按行跑一遍行级样式
+    private static func applyLineAttributesAll(_ attr: NSMutableAttributedString) {
+        let cns = attr.string as NSString
         var loc = 0
         while loc < cns.length {
             let lr = cns.lineRange(for: NSRange(location: loc, length: 0))
-            let line = cns.substring(with: lr)
-            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
-
-            // 勾选框：字符本体 + 大字号，尺寸完全由字号控制（和正文差不多大）
-            let info = TextEditBridge.markInfo(in: line)
-            if let info = info, info.markLen > 0 {
-                let boxSize: CGFloat = info.checked ? 24 : 22
-                attr.addAttributes([
-                    .font: UIFont.app(boxSize),
-                    .foregroundColor: info.checked
-                        ? UIColor.tertiaryLabel
-                        : UIColor.label.withAlphaComponent(0.78)
-                ], range: NSRange(location: lr.location + info.loc, length: info.markLen))
-            }
-
-            if let info = info, info.checked {
-                // 已勾选：只给勾选框后面的那段文字加删除线并置灰
-                var bodyLen = lr.length - info.len
-                // 行尾换行不计入
-                if bodyLen > 0, cns.character(at: lr.location + info.len + bodyLen - 1) == 0x0A {
-                    bodyLen -= 1
-                }
-                if bodyLen > 0 {
-                    attr.addAttributes([
-                        .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                        .strikethroughColor: UIColor.secondaryLabel,
-                        .foregroundColor: UIColor.secondaryLabel
-                    ], range: NSRange(location: lr.location + info.len, length: bodyLen))
-                }
-            } else if info == nil, trimmed.hasPrefix("# ") {
-                attr.addAttribute(
-                    .font,
-                    value: UIFont.app(19, weight: .semibold),
-                    range: NSRange(location: lr.location, length: max(lr.length - 1, 0))
-                )
-            } else if trimmed.hasPrefix("> ") {
-                attr.addAttribute(
-                    .foregroundColor,
-                    value: UIColor.secondaryLabel,
-                    range: NSRange(location: lr.location, length: max(lr.length - 1, 0))
-                )
-            }
+            applyLineAttributes(attr, lineRange: lr, line: cns.substring(with: lr))
             if lr.length == 0 { break }
             loc = lr.location + lr.length
         }
+    }
 
-        // 富文本样式（真加粗/斜体/下划线/删除线/高亮/等宽/字色/字号）
+    /// 两段文本的差异范围（新串坐标系）。纯用于判断「该重上哪几行的样式」。
+    static func changedRange(old: String, new: String) -> NSRange {
+        let a = old as NSString, b = new as NSString
+        let n = min(a.length, b.length)
+        var p = 0
+        while p < n, a.character(at: p) == b.character(at: p) { p += 1 }
+        var s = 0
+        while s < (n - p), a.character(at: a.length - 1 - s) == b.character(at: b.length - 1 - s) { s += 1 }
+        return NSRange(location: p, length: b.length - p - s)
+    }
+
+    /// 按当前文本 + 样式算出整篇富文本（只算不写回）
+    static func attributedContent(_ tv: UITextView,
+                                  styles: [NoteStyle],
+                                  pending: Set<String>) -> NSMutableAttributedString {
+        let attr = NSMutableAttributedString(string: tv.text ?? "", attributes: baseAttributes())
+        applyLineAttributesAll(attr)
         for st in styles {
             guard st.n > 0, st.l >= 0, st.l < attr.length else { continue }
             let len = min(st.n, attr.length - st.l)
             guard len > 0 else { continue }
-            let rng = NSRange(location: st.l, length: len)
-            let scale = st.z ?? 1
-            if st.b || st.i || st.m || scale != 1 {
-                attr.addAttribute(.font,
-                                  value: fontFor(bold: st.b, italic: st.i, mono: st.m, scale: scale),
-                                  range: rng)
-            }
-            if st.u { attr.addAttribute(.underlineStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
-            if st.s { attr.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: rng) }
-            // 字色只在这里覆盖：上面行级那遍（勾选置灰/引用变灰）先铺底，
-            // 用户显式选的颜色优先 —— 不然勾了勾选框再选颜色，颜色会被灰盖掉
-            if let c = st.c, let col = NoteColors.text(c) {
-                attr.addAttribute(.foregroundColor, value: col, range: rng)
-            }
-            if st.h || st.hc != nil {
-                attr.addAttribute(.backgroundColor,
-                                  value: NoteColors.highlight(st.hc),
-                                  range: rng)
-            }
+            applyRunAttributes(attr, style: st, range: NSRange(location: st.l, length: len))
         }
+        return attr
+    }
 
-        // 关键：重设 attributedText 会丢 contentOffset（见 keepScroll 注释）
+    /// 给整篇正文上样式（初次显示、外部数据回写、编辑结束时用）。
+    static func restyle(_ tv: UITextView, styles: [NoteStyle], pending: Set<String>) {
+        guard tv.markedTextRange == nil else { return }
+        let attr = attributedContent(tv, styles: styles, pending: pending)
+        // 重设 attributedText 会丢 contentOffset（见 keepScroll 注释）
         keepScroll(tv) {
             tv.attributedText = attr
             tv.typingAttributes = attrsFor(pending)
         }
+    }
+
+    /// 整篇重上样式，但**不碰滚动位置与选区** —— 给「自己安排光标、自己保 offset」
+    /// 的调用方（行级操作收尾）用。
+    static func restyleRaw(_ tv: UITextView, styles: [NoteStyle], pending: Set<String>) {
+        guard tv.markedTextRange == nil else { return }
+        tv.attributedText = attributedContent(tv, styles: styles, pending: pending)
+        tv.typingAttributes = attrsFor(pending)
+    }
+
+    /// 整篇替换文本、但保住滚动位置。
+    /// `tv.text = …` 会把 contentOffset 清零，长笔记一执行行级操作就跳回顶部。
+    static func setTextKeepingOffset(_ tv: UITextView, _ text: String) {
+        let off = tv.contentOffset
+        tv.text = text
+        if tv.contentOffset != off { tv.contentOffset = off }
+    }
+
+    /// **只重上「受影响的那几行」的样式** —— 打字与工具栏操作走这条。
+    ///
+    /// 为什么不整篇重建：`tv.attributedText = …` 会把 contentOffset 重置，
+    /// 正文一超过一屏，每敲一个字整篇就跳一次。而直接改 `textStorage` 的属性
+    /// **不会动滚动位置**，所以这里先在局部串上算出属性、再写回 textStorage。
+    /// `range` 会被扩展到整行（行级样式按整行判定），区间样式只取与该行相交的部分。
+    static func restyleLines(_ tv: UITextView,
+                             in range: NSRange,
+                             styles: [NoteStyle],
+                             pending: Set<String>) {
+        guard tv.markedTextRange == nil else { return }
+        let storage = tv.textStorage
+        let total = storage.length
+        guard total > 0 else { return }
+
+        let safeLoc = max(0, min(range.location, total))
+        let safeLen = max(0, min(range.length, total - safeLoc))
+        let cns = storage.string as NSString
+        let lr = cns.lineRange(for: NSRange(location: safeLoc, length: safeLen))
+        guard lr.length > 0, lr.location + lr.length <= total else { return }
+
+        let seg = cns.substring(with: lr)
+        let sub = NSMutableAttributedString(string: seg, attributes: baseAttributes())
+        applyLineAttributesAll(sub)
+        for st in styles {
+            guard st.n > 0, st.l >= 0 else { continue }
+            let inter = NSIntersectionRange(NSRange(location: st.l, length: st.n), lr)
+            guard inter.length > 0 else { continue }
+            applyRunAttributes(sub, style: st,
+                               range: NSRange(location: inter.location - lr.location, length: inter.length))
+        }
+
+        storage.beginEditing()
+        sub.enumerateAttributes(in: NSRange(location: 0, length: sub.length), options: []) { attrs, r, _ in
+            storage.setAttributes(attrs, range: NSRange(location: lr.location + r.location, length: r.length))
+        }
+        storage.endEditing()
+        tv.typingAttributes = attrsFor(pending)
     }
 
     final class Coordinator: NSObject, UITextViewDelegate {
@@ -1128,8 +1225,13 @@ struct NoteBodyEditor: UIViewRepresentable {
                 parent.text = clean
             }
             parent.bridge.record(tv)
-            NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
-                                   pending: parent.bridge.pendingTraits)
+            // 只重上「改动到的那几行」——整篇重建会让长笔记每敲一个字跳一次
+            let changed = NoteBodyEditor.changedRange(old: old, new: clean)
+            let target = changed.length > 0
+                ? changed
+                : NSRange(location: tv.selectedRange.location, length: 0)
+            NoteBodyEditor.restyleLines(tv, in: target, styles: parent.bridge.styles,
+                                        pending: parent.bridge.pendingTraits)
         }
 
         /// 光标/选区变化：更新「下一个输入」样式 + 工具栏高亮态
@@ -1226,11 +1328,14 @@ struct NoteBodyEditor: UIViewRepresentable {
                 with: hit.checked ? TextEditBridge.uncheckedMarkRaw : TextEditBridge.checkedMarkRaw
             )
             parent.bridge.adjustStyles(old: plain, new: newAll)
-            tv.text = newAll
-            tv.selectedRange = NSRange(location: min(hit.markLoc + hit.markLen, (newAll as NSString).length),
-                                       length: 0)
-            NoteBodyEditor.restyle(tv, styles: parent.bridge.styles,
-                                   pending: parent.bridge.pendingTraits)
+            // 整篇替换 text、整篇重上样式都会重置滚动位置 → 包一层只保 offset（光标由这里设）
+            NoteBodyEditor.keepOffset(tv) {
+                NoteBodyEditor.setTextKeepingOffset(tv, newAll)
+                NoteBodyEditor.restyleRaw(tv, styles: parent.bridge.styles,
+                                          pending: parent.bridge.pendingTraits)
+                tv.selectedRange = NSRange(location: min(hit.markLoc + hit.markLen, (newAll as NSString).length),
+                                           length: 0)
+            }
             parent.bridge.syncSelectionUI(tv)
             if parent.text != newAll {
                 parent.text = newAll
@@ -1348,7 +1453,7 @@ final class TextEditBridge {
             styles = Self.normalize(map, length: ns.length)
             notifyStylesChanged()
             syncSelectionUI(tv)
-            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+            refreshCurrentRange(tv)
             record(tv)
             onEdited?(NoteBodyEditor.plainText(tv.attributedText))
         } else {
@@ -1358,7 +1463,7 @@ final class TextEditBridge {
                 pendingTraits.insert(trait)
             }
             onSelectionChanged?(pendingTraits)
-            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+            refreshCurrentRange(tv)
         }
     }
 
@@ -1398,14 +1503,14 @@ final class TextEditBridge {
             styles = Self.normalize(map, length: ns.length)
             notifyStylesChanged()
             syncSelectionUI(tv)
-            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+            refreshCurrentRange(tv)
             record(tv)
             onEdited?(NoteBodyEditor.plainText(tv.attributedText))
         } else {
             pendingTraits = Self.stripping(pendingTraits, kind)
             if let token = token { pendingTraits.insert(token) }
             onSelectionChanged?(pendingTraits)
-            NoteBodyEditor.restyle(tv, styles: styles, pending: pendingTraits)
+            refreshCurrentRange(tv)
         }
     }
 
@@ -1583,7 +1688,7 @@ final class TextEditBridge {
         let r = tv.selectedRange
         let newAll = ns.replacingCharacters(in: r, with: s)
         adjustStyles(old: old, new: newAll)
-        tv.text = newAll
+        NoteBodyEditor.setTextKeepingOffset(tv, newAll)
         tv.selectedRange = NSRange(location: r.location + (s as NSString).length, length: 0)
         finish(tv)
     }
@@ -1598,7 +1703,7 @@ final class TextEditBridge {
         let sel = ns.substring(with: r)
         let newAll = ns.replacingCharacters(in: r, with: prefix + sel + suffix)
         adjustStyles(old: old, new: newAll)
-        tv.text = newAll
+        NoteBodyEditor.setTextKeepingOffset(tv, newAll)
         tv.selectedRange = NSRange(
             location: r.location + (prefix as NSString).length,
             length: (sel as NSString).length
@@ -1624,7 +1729,7 @@ final class TextEditBridge {
         let joined = out.joined(separator: "\n")
         let newAll = ns.replacingCharacters(in: lr, with: joined)
         adjustStyles(old: old, new: newAll)
-        tv.text = newAll
+        NoteBodyEditor.setTextKeepingOffset(tv, newAll)
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -1653,7 +1758,7 @@ final class TextEditBridge {
         let joined = out.joined(separator: "\n")
         let newAll = ns.replacingCharacters(in: lr, with: joined)
         adjustStyles(old: old, new: newAll)
-        tv.text = newAll
+        NoteBodyEditor.setTextKeepingOffset(tv, newAll)
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -1689,7 +1794,7 @@ final class TextEditBridge {
         let joined = out.joined(separator: "\n")
         let newAll = ns.replacingCharacters(in: lr, with: joined)
         adjustStyles(old: old, new: newAll)
-        tv.text = newAll
+        NoteBodyEditor.setTextKeepingOffset(tv, newAll)
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -1801,7 +1906,7 @@ final class TextEditBridge {
         let joined = out.joined(separator: "\n")
         let newAll = ns.replacingCharacters(in: lr, with: joined)
         adjustStyles(old: old, new: newAll)
-        tv.text = newAll
+        NoteBodyEditor.setTextKeepingOffset(tv, newAll)
         tv.selectedRange = NSRange(location: lr.location + (joined as NSString).length, length: 0)
         finish(tv)
     }
@@ -1827,8 +1932,25 @@ final class TextEditBridge {
         }
     }
 
+    /// 工具栏类操作之后：只重上「当前选区 / 光标所在行」的样式。
+    ///
+    /// 不要用整篇 `restyle`（refreshUI）：它会重设 attributedText，
+    /// 长笔记的滚动位置被重置，界面表现就是「点一下工具栏整篇跳一下」。
+    private func refreshCurrentRange(_ tv: UITextView) {
+        let sel = tv.selectedRange
+        let target = sel.length > 0 ? sel : NSRange(location: sel.location, length: 0)
+        NoteBodyEditor.restyleLines(tv, in: target, styles: styles, pending: pendingTraits)
+    }
+
     private func finish(_ tv: UITextView) {
-        refreshUI?()
+        // 走到这里的操作都刚「整篇替换过文本」（插入 / 列表 / 勾选 / 缩进），
+        // 属性全被清空 → 必须整篇重上样式（只重上局部会丢掉其它行的样式）。
+        // 而整篇重上会重置 contentOffset 与光标，所以在这里一起包住、还原。
+        let caret = tv.selectedRange
+        NoteBodyEditor.keepOffset(tv) {
+            NoteBodyEditor.restyleRaw(tv, styles: styles, pending: pendingTraits)
+            tv.selectedRange = caret
+        }
         record(tv)
         onEdited?(tv.text)
     }
