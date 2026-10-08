@@ -27,7 +27,7 @@ struct AlarmOverlay: View {
 
                 bellIcon
 
-                Text(task.isHit ? "已经抢到了" : "该做了！")
+                Text(task.inHitGroup ? "已经抢到了" : (task.isQuotaTask ? "该抢了！" : "该做了！"))
                     .font(.app(17, weight: .medium))
                     .foregroundColor(.white.opacity(0.85))
                     .padding(.top, 14)
@@ -39,8 +39,13 @@ struct AlarmOverlay: View {
                     .padding(.top, 10)
                     .padding(.horizontal, 8)
 
-                if task.isHit {
+                if task.inHitGroup {
                     Text("已抢到 · 第 \(max(1, task.nagCount)) 天提醒（每天一次）")
+                        .font(.app(14))
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(.top, 12)
+                } else if task.isQuotaTask {
+                    Text("本月已抢 \(task.hitCount)/\(task.quota) · 还剩 \(task.hitRemaining) 次机会")
                         .font(.app(14))
                         .foregroundColor(.white.opacity(0.9))
                         .padding(.top, 12)
@@ -69,9 +74,16 @@ struct AlarmOverlay: View {
                 Spacer(minLength: 16)
 
                 Button {
-                    store.complete(id: task.id)
+                    if task.isQuotaTask {
+                        // 配额型：主按钮是「又抢到一次」，抢满自动毕业
+                        store.markHit(id: task.id)
+                    } else {
+                        store.complete(id: task.id)
+                    }
                 } label: {
-                    Text(task.isHit ? "收尾（下轮再抢）" : "完成了")
+                    Text(task.inHitGroup
+                         ? "收尾（下轮再抢）"
+                         : (task.isQuotaTask ? "抢到了 +1" : "完成了"))
                         .font(.app(20, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
@@ -81,7 +93,7 @@ struct AlarmOverlay: View {
                 }
                 .buttonStyle(.plain)
 
-                if task.isHit {
+                if task.inHitGroup {
                     // 已抢到的任务只有「今天先不提醒」这一个有意义的选择，
                     // 延后 5/10/30 分钟没意义（它的下一次提醒本来就是明天）
                     Button {
@@ -110,7 +122,7 @@ struct AlarmOverlay: View {
                     store.markNagged(id: task.id)
                     alarm.dismiss(id: task.id)
                 } label: {
-                    Text(task.isHit
+                    Text(task.inHitGroup
                          ? "先关掉，明天同一时间再提醒"
                          : "先关掉，\(task.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟后再催")
                         .font(.app(14))

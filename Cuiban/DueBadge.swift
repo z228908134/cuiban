@@ -71,18 +71,23 @@ struct DueBadge: View {
             let s = task.doneAt.map { "已完成 · " + timeLabel($0) } ?? "已完成"
             return (s, "", Color.secondary, Color.primary.opacity(0.06))
         }
-        // 已抢到：这次机会已经拿到了，不该再报「已逾期」。
+        // 已抢到（单次机会型）：这次机会已经拿到了，不该再报「已逾期」。
         // 用青色（沉稳、不刺眼），和逾期的红、待办的蓝都区分得开。
-        if task.isHit {
+        if task.inHitGroup {
             return ("已抢到", "每天提醒",
                     Color(red: 0.05, green: 0.43, blue: 0.34),
                     Color(red: 0.86, green: 0.95, blue: 0.92))
         }
         let due = task.effectiveDue
         let diff = due.timeIntervalSince(now)
+        // 配额型已经抢到几次但没满：时间照常上色（还要继续抢），
+        // 补充说明换成抢到的进度，比「还有 x 小时」有用。
+        let quotaNote: String? = (task.isQuotaTask && task.hitCount > 0)
+            ? "已抢 \(task.hitCount)/\(task.quota)"
+            : nil
         // 逾期：红底
         if diff <= 0 {
-            return ("已逾期 " + human(-diff), timeLabel(due),
+            return ("已逾期 " + human(-diff), quotaNote ?? timeLabel(due),
                     Color(red: 0.64, green: 0.18, blue: 0.18),
                     Color(red: 0.99, green: 0.92, blue: 0.92))
         }
@@ -92,12 +97,12 @@ struct DueBadge: View {
                                       from: cal.startOfDay(for: now),
                                       to: cal.startOfDay(for: due)).day ?? 0
         if days <= 1 {
-            return ("今天 " + timeLabel(due), "还有 " + human(diff),
+            return ("今天 " + timeLabel(due), quotaNote ?? ("还有 " + human(diff)),
                     Color(red: 0.52, green: 0.31, blue: 0.04),
                     Color(red: 0.98, green: 0.91, blue: 0.84))
         }
         // 更远的：蓝底
-        return (timeLabel(due), "还有 " + human(diff),
+        return (timeLabel(due), quotaNote ?? ("还有 " + human(diff)),
                 Color(red: 0.09, green: 0.37, blue: 0.65),
                 Color(red: 0.90, green: 0.95, blue: 0.99))
     }

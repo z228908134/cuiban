@@ -87,7 +87,7 @@ enum NotificationScheduler {
             // 它该被收起、并生成下一条待抢任务了（正常由 AlarmLoop / 切前台自动收起，
             // 这里兜底的是「App 长期没打开」的情况，避免活动结束后还在每天提醒）
             let now = Date()
-            let active = tasks.filter { !$0.isDone && !($0.isHit && $0.hitDeadline <= now) }
+            let active = tasks.filter { !$0.shouldRollOver(at: now) }
             guard !active.isEmpty else { return }
 
             // 槽位按紧迫程度竞标分配（见 allocate 注释），不再按任务数平均切
@@ -168,10 +168,11 @@ enum NotificationScheduler {
 
     /// 紧迫度权重，越近越大
     private static func urgency(_ t: TaskItem, now: Date) -> Int {
-        // 已抢到：已经拿下了，只是每天跟一下，给最低档
+        // 已抢到（单次机会型）：已经拿下了，只是每天跟一下，给最低档
         // （effectiveDue 在过去，不特判会按「已逾期」拿到最高权重，
         //   把真正紧急的任务的配额吃掉）
-        if t.isHit { return 2 }
+        // 配额型没抢满的不算「已抢到」——它还有机会要抢，按正常紧迫度参与竞标。
+        if t.inHitGroup { return 2 }
         let dt = t.effectiveDue.timeIntervalSince(now)
         if dt <= 0 { return 6 }                  // 已逾期
         if dt <= 3600 { return 5 }               // 1 小时内
@@ -190,8 +191,8 @@ enum NotificationScheduler {
         var fire = task.effectiveDue
         var index = 0
 
-        if task.isHit {
-            // 已抢到：每天在「任务原本的时分」提醒一次。
+        if task.inHitGroup {
+            // 已抢到（单次机会型）：每天在「任务原本的时分」提醒一次。
             // 不能沿用到期时间那套网格 —— 抢购时刻早就过去了，从那儿
             // 按天滚出来的时刻是「抢购时刻 + N 天」，虽然也是每天一次，
             // 但和用户选的时刻不是一回事（跨月、跨时区还会漂）。
@@ -215,14 +216,25 @@ enum NotificationScheduler {
             // 机会很密时（例如「每 3 天一轮」）这条可能压根排不上，那就不排 ——
             // 反正到点 AlarmLoop 会把任务收起重回高频催抢，提前插一条
             // 「该抢了」的每日提醒只会和真正的催抢提醒撞在一起。
-            if task.isHit, fire >= task.hitDeadline { break }
+            if task.inHitGroup, fire >= task.hitDeadline { break }
 
             let content = UNMutableNotificationContent()
-            if task.isHit {
+            if task.inHitGroup {
                 content.title = "📌 " + task.title
                 content.body = index + i == 0
                     ? "这次机会已经抢到了，每天跟一下进度。"
                     : "已经抢到第 \(index + i + 1) 天了，别忘了继续跟进。"
+            } else if task.isQuotaTask {
+                // 配额型：本周期还有机会没抢满，保持催抢节奏，文案带进度
+                content.title = "⏰ " + task.title
+                if task.hitCount > 0 {
+                    content.body = "本月已抢 \(task.hitCount)/\(task.quota)，"
+                        + "还剩 \(task.hitRemaining) 次机会，继续抢。"
+                } else {
+                    content.body = index + i == 0
+                        ? "到点了，该抢了（本月 \(task.quota) 次机会）。"
+                        : "已经催你 \(index + i + 1) 次了，这次机会还没抢到。"
+                }
             } else {
                 content.title = "⏰ " + task.title
                 content.body = index + i == 0

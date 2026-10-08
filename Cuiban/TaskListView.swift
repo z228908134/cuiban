@@ -135,12 +135,21 @@ struct TaskListView: View {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text(t.nagIntervalText(store.settings.defaultIntervalMinutes))
                         .font(.app(11))
-                        .foregroundColor(t.isHit ? Color(red: 0.05, green: 0.43, blue: 0.34) : .secondary)
-                    if t.isHit {
+                        .foregroundColor(t.inHitGroup ? TaskListView.hitTint : .secondary)
+                    if t.inHitGroup {
                         // 一月多次机会时，「下轮什么时候」比「催了几次」有用得多
                         Text("下轮 " + fmt(t.hitDeadline, "M/d HH:mm"))
                             .font(.app(10))
                             .foregroundColor(.secondary)
+                    } else if t.isQuotaTask && t.hitCount > 0 {
+                        // 配额型还在催抢：把「已抢 2/4」顶上来，比催了几次有用
+                        Text("已抢 \(t.hitCount)/\(t.quota)")
+                            .font(.app(11, weight: .bold))
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(TaskListView.hitTint.opacity(0.14))
+                            .foregroundColor(TaskListView.hitTint)
+                            .clipShape(Capsule())
                     } else if t.nagCount > 0 {
                         Text("催 \(t.nagCount) 次")
                             .font(.app(11, weight: .bold))
@@ -176,19 +185,20 @@ struct TaskListView: View {
             }
             .tint(Color(red: 0.98, green: 0.58, blue: 0.00))
 
-            // 已抢到 / 撤销已抢到。抢购类任务用：抢中之后任务不消失，
-            // 催促降频成每天一次（沿用任务原本的时分），到下月机会时刻自动收起。
+            // 抢到 / 撤销。抢购类任务用：
+            //   · 单次机会型：抢到后任务不消失，催促降为每天一次，到下轮机会自动收起；
+            //   · 配额型（一月 N 次）：每点一次记一次，没满继续按原节奏催。
             if !t.isDone {
                 Button {
-                    if t.isHit {
+                    if t.inHitGroup {
                         store.undoHit(id: t.id)
                     } else {
                         store.markHit(id: t.id)
                     }
                 } label: {
-                    swipeIcon(t.isHit ? "arrow.uturn.backward" : "checkmark.seal.fill")
+                    swipeIcon(t.inHitGroup ? "arrow.uturn.backward" : "checkmark.seal.fill")
                 }
-                .tint(t.isHit
+                .tint(t.inHitGroup
                       ? Color(red: 0.42, green: 0.44, blue: 0.47)
                       : Color(red: 0.05, green: 0.53, blue: 0.42))
             }
@@ -214,19 +224,22 @@ struct TaskListView: View {
     /// 已抢到的青色：既不刺眼又能一眼看出「这条已经拿下了」
     static let hitTint = Color(red: 0.05, green: 0.43, blue: 0.34)
 
-    /// 行首状态图标：完成 / 已抢到 / 未完成
+    /// 行首状态图标：完成 / 已抢到 / 抢到一部分 / 未完成
     private func rowIcon(_ t: TaskItem) -> String {
         if t.isDone { return "checkmark.circle.fill" }
-        if t.isHit { return "checkmark.seal.fill" }
+        if t.inHitGroup { return "checkmark.seal.fill" }
+        // 配额型已经抢到几次、但本周期还没抢满：半填充表示「进度中」
+        if t.isQuotaTask && t.hitCount > 0 { return "circle.lefthalf.filled" }
         return "circle"
     }
 
-    /// 行首图标颜色：已完成绿 / 已抢到青 / 逾期红 / 其余次要色。
+    /// 行首图标颜色：已完成绿 / 已抢到青 / 抢到一部分青 / 逾期红 / 其余次要色。
     /// 写成函数而不是嵌套三元——嵌套三元 + 简写颜色（.red 这类）
     /// 会让类型推断变脆，编译容易报 ambiguous。
     private func rowIconColor(_ t: TaskItem) -> Color {
         if t.isDone { return .green }
-        if t.isHit { return TaskListView.hitTint }
+        if t.inHitGroup { return TaskListView.hitTint }
+        if t.isQuotaTask && t.hitCount > 0 { return TaskListView.hitTint }
         if t.isOverdue { return .red }
         return .secondary
     }
@@ -259,14 +272,16 @@ struct TaskDetailView: View {
 
     private var statusIcon: String {
         if current.isDone { return "checkmark.circle.fill" }
-        if current.isHit { return "checkmark.seal.fill" }
+        if current.inHitGroup { return "checkmark.seal.fill" }
+        if current.isQuotaTask && current.hitCount > 0 { return "circle.lefthalf.filled" }
         if current.isOverdue { return "exclamationmark.circle.fill" }
         return "circle"
     }
 
     private var statusColor: Color {
         if current.isDone { return .green }
-        if current.isHit { return TaskListView.hitTint }
+        if current.inHitGroup { return TaskListView.hitTint }
+        if current.isQuotaTask && current.hitCount > 0 { return TaskListView.hitTint }
         if current.isOverdue { return .red }
         return .secondary
     }
@@ -351,12 +366,22 @@ struct TaskDetailView: View {
                     value: current.isDone
                         ? "—"
                         : current.nagIntervalText(store.settings.defaultIntervalMinutes))
-            if current.isHit {
+            if current.isQuotaTask {
+                Divider().padding(.leading, 38)
+                infoRow(icon: "checkmark.seal", label: "本月机会",
+                        value: "已抢 \(current.hitCount)/\(current.quota)"
+                            + (current.hitRemaining > 0 ? "，还剩 \(current.hitRemaining) 次" : "，已抢满"))
+            }
+            if current.inHitGroup {
                 Divider().padding(.leading, 38)
                 infoRow(icon: "hand.raised", label: "抢到时间",
                         value: current.hitAt.map { timeLabel($0) } ?? "—")
                 Divider().padding(.leading, 38)
                 infoRow(icon: "calendar.badge.clock", label: "每天提醒至",
+                        value: timeLabel(current.hitDeadline))
+            } else if current.isQuotaTask {
+                Divider().padding(.leading, 38)
+                infoRow(icon: "calendar.badge.clock", label: "本周期至",
                         value: timeLabel(current.hitDeadline))
             }
             if current.nagCount > 0 {
@@ -373,42 +398,79 @@ struct TaskDetailView: View {
     private var hitBlock: some View {
         if !current.isDone {
             VStack(alignment: .leading, spacing: 10) {
-                Text(current.isHit ? "已抢到，改成每天提醒了" : "抢到了就点一下，别再高频催")
+                Text(hitTitle)
                     .font(.app(15, weight: .semibold))
-                Text(current.isHit
-                     ? "任务会留在清单的「已抢到」里，每天 \(fmt(current.dueDate, "HH:mm")) 提醒一次；"
-                        + "到 \(timeLabel(current.hitDeadline)) 自动收起，那时会重新开始催抢。"
-                     : "抢购 / 报名类任务用：抢到了点一下，任务不消失，提醒从每 "
-                        + "\(current.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟降为每天一次"
-                        + "（沿用任务本身的时分），到下次机会时刻自动收起、重新开始催抢。"
-                        + "重复设成「每 7 天」就是一月 4 次机会，「每月 1 号、15 号」就是一月 2 次。")
+                Text(hitDesc)
                     .font(.app(12))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
 
+                // 主按钮：抢到一次就点一次（配额型可累加，单次机会型点一下转每天提醒）
                 Button {
-                    if current.isHit {
-                        store.undoHit(id: current.id)
-                    } else {
-                        store.markHit(id: current.id)
-                    }
+                    store.markHit(id: current.id)
                 } label: {
-                    Text(current.isHit ? "撤销已抢到" : "已抢到")
+                    Text(current.isQuotaFull
+                         ? "本月已抢满"
+                         : (current.isQuotaTask
+                            ? "抢到一次（\(min(current.hitCount + 1, current.quota))/\(current.quota)）"
+                            : "已抢到"))
                         .font(.app(15, weight: .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 12)
-                        .background(current.isHit
+                        .background(current.isQuotaFull
                                     ? Color(UIColor.tertiarySystemFill)
                                     : Color(red: 0.05, green: 0.53, blue: 0.42))
-                        .foregroundColor(current.isHit ? .primary : .white)
+                        .foregroundColor(current.isQuotaFull ? .primary : .white)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
+                .disabled(current.isQuotaFull)
+
+                if current.isHit {
+                    Button {
+                        store.undoHit(id: current.id)
+                    } label: {
+                        Text(current.isQuotaTask ? "撤销一次（-1）" : "撤销已抢到")
+                            .font(.app(14, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 10)
+                            .background(Color(UIColor.tertiarySystemFill))
+                            .foregroundColor(.primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(RoundedRectangle(cornerRadius: 14).fill(Color(UIColor.secondarySystemGroupedBackground)))
         }
+    }
+
+    private var hitTitle: String {
+        if current.isQuotaTask {
+            return current.hitCount > 0
+                ? "本月已抢 \(current.hitCount)/\(current.quota)"
+                : "抢到一次就点一下（本月 \(current.quota) 次机会）"
+        }
+        return current.inHitGroup ? "已抢到，改成每天提醒了" : "抢到了就点一下，别再高频催"
+    }
+
+    private var hitDesc: String {
+        let interval = current.resolvedInterval(store.settings.defaultIntervalMinutes)
+        if current.isQuotaTask {
+            return "一个月 \(current.quota) 次机会、每天都能抢的任务用这个：每抢到一次就点一下，"
+                + "没抢满会一直按原节奏催（每 \(interval) 分钟）；"
+                + "抢满 \(current.quota) 次本周期就毕业，"
+                + "没抢满则到 \(timeLabel(current.hitDeadline)) 自动作废、下个周期重新开始。"
+        }
+        if current.inHitGroup {
+            return "任务会留在清单的「已抢到」里，每天 \(fmt(current.dueDate, "HH:mm")) 提醒一次；"
+                + "到 \(timeLabel(current.hitDeadline)) 自动收起，那时会重新开始催抢。"
+        }
+        return "抢购 / 报名类任务用：抢到了点一下，任务不消失，提醒从每 \(interval) 分钟降为每天一次"
+            + "（沿用任务本身的时分），到下次机会时刻自动收起、重新开始催抢。"
+            + "如果一个月有多次机会、每天都能抢，把「本月机会次数」调大即可。"
     }
 
     private func infoRow(icon: String, label: String, value: String) -> some View {
