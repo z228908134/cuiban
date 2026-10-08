@@ -15,6 +15,8 @@ enum NotificationScheduler {
     static let idPrefix = "cb."
     /// 系统上限 64，留几条余量
     static let totalSlots = 60
+    /// 单个任务最多占多少条：任务很少时别让一个任务把配额一次吃光
+    static let maxSlotsPerTask = 12
 
     static func center() -> UNUserNotificationCenter { UNUserNotificationCenter.current() }
 
@@ -81,16 +83,76 @@ enum NotificationScheduler {
                 c.removePendingNotificationRequests(withIdentifiers: old)
             }
 
-            let active = tasks.filter { !$0.isDone }.sorted { $0.effectiveDue < $1.effectiveDue }
+            let active = tasks.filter { !$0.isDone }
             guard !active.isEmpty else { return }
 
-            // 每个任务分到的槽位数。上限压在 12：任务少时原来会给单个任务排满
-            // 60 条，等于把系统的配额一次吃光，别的任务反而排不上。
-            let per = max(6, min(12, totalSlots / max(1, active.count)))
-            for t in active {
-                schedule(t, settings: settings, limit: per, catchUp: catchUp)
+            // 槽位按紧迫程度竞标分配（见 allocate 注释），不再按任务数平均切
+            for (t, slots) in allocate(active) where slots > 0 {
+                schedule(t, settings: settings, limit: slots, catchUp: catchUp)
             }
         }
+    }
+
+    // MARK: 槽位分配
+    //
+    // 原来是「60 ÷ 任务数，再夹到 6~12 条」，这个平均法在任务多时会直接崩：
+    // 任务数一过 10，60/12 = 5 被下限抬回 6，12 个任务就是 72 条 ——
+    // 超过系统 64 条硬上限，多出来的由 iOS 直接丢弃，丢的还是「最晚触发」
+    // 那几条（也就是截止最远的任务），我们完全控制不了。15 个任务要丢 26 条。
+    //
+    // 现在按紧迫度竞标：每个任务先算一个权重，然后反复把下一个槽位发给
+    // 「权重 ÷ (已分到 + 1)」最大的那个，直到 60 个槽位分完。
+    //   · 越急的任务分得越密（已逾期 > 1 小时内 > 1 天内 > 3 天内 > 1 周内 > 更远）
+    //   · 每个任务至少 1 条占位，不会出现「完全没提醒」
+    //   · 总量恒等于 60，任务再多也不越界
+    //   · 后台常驻每分钟重排一次，任务临近时权重自然升高，会自动被喂更多槽位
+    static func allocate(_ active: [TaskItem]) -> [(TaskItem, Int)] {
+        let now = Date()
+
+        // 任务数超过槽位总数：只保最紧急的前 60 个，各 1 条。
+        // 剩下的等前面的完成腾出配额、下一轮重排再轮到（App 列表里照样看得到）。
+        if active.count > totalSlots {
+            let urgent = active.sorted { $0.effectiveDue < $1.effectiveDue }.prefix(totalSlots)
+            return urgent.map { ($0, 1) }
+        }
+
+        var slots: [String: Int] = [:]
+        for t in active { slots[t.id] = 0 }
+
+        var budget = totalSlots
+        while budget > 0 {
+            var best: TaskItem? = nil
+            var bestScore = -1.0
+            for t in active {
+                let n = slots[t.id] ?? 0
+                if n >= maxSlotsPerTask { continue }
+                let score = Double(urgency(t, now: now)) / Double(n + 1)
+                if score > bestScore + 0.000001 {
+                    bestScore = score
+                    best = t
+                } else if abs(score - bestScore) <= 0.000001,
+                          let b = best, n < (slots[b.id] ?? 0) {
+                    // 同权重时优先补给分得少的，避免同紧急度的任务也分得忽多忽少
+                    best = t
+                }
+            }
+            guard let pick = best else { break }
+            slots[pick.id, default: 0] += 1
+            budget -= 1
+        }
+
+        return active.map { ($0, slots[$0.id] ?? 0) }
+    }
+
+    /// 紧迫度权重，越近越大
+    private static func urgency(_ t: TaskItem, now: Date) -> Int {
+        let dt = t.effectiveDue.timeIntervalSince(now)
+        if dt <= 0 { return 6 }                  // 已逾期
+        if dt <= 3600 { return 5 }               // 1 小时内
+        if dt <= 24 * 3600 { return 4 }          // 1 天内
+        if dt <= 3 * 24 * 3600 { return 3 }      // 3 天内
+        if dt <= 7 * 24 * 3600 { return 2 }      // 1 周内
+        return 1                                 // 更远的先占 1 条
     }
 
     static func schedule(_ task: TaskItem, settings: AppSettings, limit: Int, catchUp: Bool) {
