@@ -71,7 +71,7 @@ struct AlarmOverlay: View {
                 Button {
                     store.complete(id: task.id)
                 } label: {
-                    Text(task.isHit ? "收尾（下月再抢）" : "完成了")
+                    Text(task.isHit ? "收尾（下轮再抢）" : "完成了")
                         .font(.app(20, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)

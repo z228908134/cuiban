@@ -5,7 +5,9 @@ import UserNotifications
 // MARK: - 重复方式
 
 enum RepeatMode: String, Codable, CaseIterable, Identifiable {
-    case none, daily, weekly, weekday, monthly
+    /// everyNDays / monthlyDays 是为了「一月能抢好几次」的抢购类任务加的：
+    /// 原来的粒度最细只到「每月」，表达不了「每 7 天一轮」或「每月 1 号、15 号」。
+    case none, daily, everyNDays, weekly, weekday, monthly, monthlyDays
 
     var id: String { rawValue }
 
@@ -13,11 +15,16 @@ enum RepeatMode: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .none: return "不重复"
         case .daily: return "每天"
+        case .everyNDays: return "每几天"
         case .weekly: return "每周"
         case .weekday: return "工作日"
         case .monthly: return "每月"
+        case .monthlyDays: return "每月几号"
         }
     }
+
+    /// 会按规则一次次往后滚的（点「完成」后要生成下一次）
+    var recurs: Bool { self != .none }
 }
 
 // MARK: - 任务
@@ -32,6 +39,10 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var repeatMode: RepeatMode = .none
     /// 每周重复时具体是哪几天（Calendar 口径：1=周日 ... 7=周六），空表示「每周同一天」
     var weekdays: [Int] = []
+    /// 「每几天」重复的间隔天数（1 = 每天，7 = 每周）
+    var dayInterval: Int = 2
+    /// 「每月几号」重复的日期（1~31），可多选。例：[1, 15] = 每月 1 号、15 号各一次机会
+    var monthDays: [Int] = []
     /// 附在任务上的照片（存在沙盒 attachments/ 里的文件名）
     var photos: [String] = []
     var isDone: Bool = false
@@ -62,10 +73,11 @@ struct TaskItem: Identifiable, Codable, Equatable {
 
     /// 已抢到阶段的截止时间：下次机会到来的时刻。
     ///
-    /// 重复任务按重复规则往后一步（每月抢购 → 下个月同一天同一时刻）；
+    /// 重复任务按重复规则往后一步 —— 「每月 1 号」是下个月 1 号，
+    /// 「每 7 天」是 7 天后，「每月 1 号、15 号」是本月 15 号（或下月 1 号）。
     /// 不重复的按「一个月」算（活动持续一月的场景），到点自动收尾。
     var hitDeadline: Date {
-        if repeatMode != .none { return stepForward(from: dueDate) }
+        if repeatMode.recurs { return stepForward(from: dueDate) }
         return Calendar.current.date(byAdding: .month, value: 1, to: dueDate)
             ?? dueDate.addingTimeInterval(2592000)
     }
@@ -85,13 +97,21 @@ struct TaskItem: Identifiable, Codable, Equatable {
         isHit ? "每天提醒" : "每 \(resolvedInterval(fallback)) 分钟"
     }
 
-    /// 按重复规则往后走一步
+    /// 按重复规则从 `date` 往后走一步（= 下一次机会）。
+    ///
+    /// **这里是重复规则的唯一实现。** 之前 stepForward 和 TaskStore.nextOccurrence
+    /// 各写了一份同样的 switch，加一种重复方式得改两处、漏一处就会「列表显示的
+    /// 日期和实际生成的下一次对不上」。现在两边都走这一个函数。
     func stepForward(from date: Date, calendar cal: Calendar = .current) -> Date {
         switch repeatMode {
         case .none:
             return date
         case .daily:
             return cal.date(byAdding: .day, value: 1, to: date) ?? date.addingTimeInterval(86400)
+        case .everyNDays:
+            let n = max(1, dayInterval)
+            return cal.date(byAdding: .day, value: n, to: date)
+                ?? date.addingTimeInterval(Double(n) * 86400)
         case .weekday:
             var d = date
             repeat {
@@ -110,12 +130,74 @@ struct TaskItem: Identifiable, Codable, Equatable {
             return d
         case .monthly:
             return cal.date(byAdding: .month, value: 1, to: date) ?? date.addingTimeInterval(2592000)
+        case .monthlyDays:
+            return TaskItem.nextMonthDay(after: date, days: monthDays, calendar: cal)
         }
+    }
+
+    // MARK: 每月几号
+
+    /// 「每月几号」：找出 `date` 之后最近的一个落在 `days` 里的日期，时分沿用 `date`。
+    ///
+    /// 例：days = [1, 15]，date = 3 月 2 日 10:00 → 3 月 15 日 10:00；
+    ///     date = 3 月 20 日 10:00 → 4 月 1 日 10:00。
+    static func nextMonthDay(after date: Date, days: [Int], calendar cal: Calendar) -> Date {
+        let ds = Array(Set(days)).filter { (1...31).contains($0) }.sorted()
+        guard !ds.isEmpty else {
+            // 一个都没选就退回「每月同一天」，总比把任务卡死强
+            return cal.date(byAdding: .month, value: 1, to: date) ?? date.addingTimeInterval(2592000)
+        }
+        let hm = cal.dateComponents([.hour, .minute, .second], from: date)
+
+        // 1) 先看本月剩下的日子
+        let cur = cal.dateComponents([.year, .month, .day], from: date)
+        if let y = cur.year, let m = cur.month, let cd = cur.day {
+            for day in ds where day > cd {
+                if let cand = fixedDate(year: y, month: m, day: day, hm: hm, cal: cal), cand > date {
+                    return cand
+                }
+            }
+        }
+
+        // 2) 再往后逐月找。2 月 30 日这种不存在的组合由 fixedDate 直接否掉，
+        //    所以「每月 30 号」在 2 月会自然跳到 3 月 30 日，而不是滚成 3 月 2 日。
+        for offset in 1...24 {
+            // 注意：这里每次都从原始 date 加 offset，不做累加 ——
+            // 累加会漂（1/31 → 2/28 → 3/28），一次算到位才会正确回到 31 号。
+            guard let probe = cal.date(byAdding: .month, value: offset, to: date) else { continue }
+            let pc = cal.dateComponents([.year, .month], from: probe)
+            guard let y = pc.year, let m = pc.month else { continue }
+            for day in ds {
+                if let cand = fixedDate(year: y, month: m, day: day, hm: hm, cal: cal) {
+                    return cand
+                }
+            }
+        }
+        return cal.date(byAdding: .month, value: 1, to: date) ?? date.addingTimeInterval(2592000)
+    }
+
+    /// 构造指定年月日 + 给定时分的日期；日期不存在（如 2 月 30 日）返回 nil。
+    ///
+    /// Calendar 对越界日期是「顺延」而不是报错 —— 2 月 30 日会变成 3 月 2 日，
+    /// 那样「每月 30 号」在 2 月会悄悄变成 3 月初，必须自己回读校验挡掉。
+    private static func fixedDate(year: Int, month: Int, day: Int,
+                                  hm: DateComponents, cal: Calendar) -> Date? {
+        var c = DateComponents()
+        c.year = year
+        c.month = month
+        c.day = day
+        c.hour = hm.hour ?? 9
+        c.minute = hm.minute ?? 0
+        c.second = 0
+        guard let d = cal.date(from: c) else { return nil }
+        let back = cal.dateComponents([.year, .month, .day], from: d)
+        guard back.year == year, back.month == month, back.day == day else { return nil }
+        return d
     }
 
     /// 从当前到期时间开始，按重复规则推算出 `end` 之前的每一次日期（不含已完成的）
     func projectedDates(until end: Date, maxCount: Int = 400) -> [Date] {
-        guard repeatMode != .none, !isDone else { return [] }
+        guard repeatMode.recurs, !isDone else { return [] }
         let cal = Calendar.current
         let now = Date()
         var d = effectiveDue
@@ -142,7 +224,8 @@ struct TaskItem: Identifiable, Codable, Equatable {
 extension TaskItem {
     enum CodingKeys: String, CodingKey {
         case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays, photos,
-             isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil, hitAt
+             isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil, hitAt,
+             dayInterval, monthDays
     }
 
     init(from decoder: Decoder) throws {
@@ -155,6 +238,8 @@ extension TaskItem {
         intervalMinutes = try c.decodeIfPresent(Int.self, forKey: .intervalMinutes) ?? d.intervalMinutes
         repeatMode = try c.decodeIfPresent(RepeatMode.self, forKey: .repeatMode) ?? d.repeatMode
         weekdays = try c.decodeIfPresent([Int].self, forKey: .weekdays) ?? d.weekdays
+        dayInterval = try c.decodeIfPresent(Int.self, forKey: .dayInterval) ?? d.dayInterval
+        monthDays = try c.decodeIfPresent([Int].self, forKey: .monthDays) ?? d.monthDays
         photos = try c.decodeIfPresent([String].self, forKey: .photos) ?? d.photos
         isDone = try c.decodeIfPresent(Bool.self, forKey: .isDone) ?? d.isDone
         doneAt = try c.decodeIfPresent(Date.self, forKey: .doneAt)
@@ -396,14 +481,17 @@ final class TaskStore: ObservableObject {
         NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
     }
 
-    func complete(id: String?) {
+    /// - Parameter nextFloor: 推算「下一次机会」时的时间地板，默认「现在」。
+    ///   手动完成 / 点「收尾」走默认值（找当前时间之后的机会）；
+    ///   「已抢到」自动收起时由 rollOverHitTasks 传入，把这次机会本身保留下来。
+    func complete(id: String?, nextFloor: Date? = nil) {
         guard let id = id, let i = index(of: id) else { return }
         let old = tasks[i]
         tasks[i].isDone = true
         tasks[i].doneAt = Date()
         tasks[i].snoozeUntil = nil
 
-        if old.repeatMode != .none, let next = nextOccurrence(of: old) {
+        if old.repeatMode.recurs, let next = nextOccurrence(of: old, floor: nextFloor ?? Date()) {
             var n = old
             n.id = UUID().uuidString
             n.isDone = false
@@ -464,14 +552,28 @@ final class TaskStore: ObservableObject {
     ///
     /// 走完 complete() 就会把下一条排出来（重复任务），新任务从「未抢到」
     /// 起步继续高频催抢；不重复的任务则就此完成，不再每天提醒。
-    /// AlarmLoop 每秒会 call 一次，所以内部先做一次极便宜的判断再动手。
+    /// AlarmLoop 每 30 秒会 call 一次，所以先把要收起的 id 收集完再动数组 ——
+    /// complete 会往 tasks 里 append 下一条，边遍历边改容易出岔子。
     func rollOverHitTasks() {
-        guard tasks.contains(where: { $0.isHit && !$0.isDone }) else { return }
         let now = Date()
+        var due: [(id: String, deadline: Date)] = []
         for t in tasks where t.isHit && !t.isDone && t.hitDeadline <= now {
-            complete(id: t.id)
+            due.append((t.id, t.hitDeadline))
+        }
+        guard !due.isEmpty else { return }
+        for item in due {
+            // 时间地板取 max(本次机会时刻 - 1 秒, 现在 - 5 分钟)：
+            //   · 正常收起（轮询 30 秒内就会跑到）→ 用前者，把这次机会本身保住；
+            //   · App 关了好几天才打开 → 用后者，已经错过的窗口不补催，
+            //     直接排到下一个还没开始的机会。
+            let floor = max(item.deadline.addingTimeInterval(-1),
+                            now.addingTimeInterval(-TaskStore.rolloverGrace))
+            complete(id: item.id, nextFloor: floor)
         }
     }
+
+    /// 收起「已抢到」的容差：机会时刻过去这么久之内，仍算「就是这次机会」
+    private static let rolloverGrace: TimeInterval = 300
 
     func snooze(id: String?, minutes: Int? = nil) {
         guard let id = id, let i = index(of: id) else { return }
@@ -508,33 +610,24 @@ final class TaskStore: ObservableObject {
 
     // MARK: 重复任务的下一次时间
 
-    private func nextOccurrence(of t: TaskItem) -> Date? {
-        guard t.repeatMode != .none else { return nil }
+    /// 下一次机会的时刻。规则全部复用 TaskItem.stepForward ——
+    /// 那边是唯一实现，这里只负责「一直滚到未来」。
+    ///
+    /// - Parameter floor: 早于这个时间的机会算过期，跳过。默认「现在」。
+    ///   **「已抢到」自动收起时必须传 `hitDeadline - 1 秒`**：收起动作正好发生在
+    ///   hitDeadline 那一刻（每 30 秒轮询 + 可能延迟几十秒），如果按 Date() 做地板，
+    ///   那次机会本身就等于「刚刚过去」，会被直接跳过、直接排到再下一轮 ——
+    ///   也就是「抢到了，到下轮自动重新催抢」会整整漏掉一轮。
+    private func nextOccurrence(of t: TaskItem, floor: Date = Date()) -> Date? {
+        guard t.repeatMode.recurs else { return nil }
         let cal = Calendar.current
         var d = t.effectiveDue
         for _ in 0..<400 {
-            switch t.repeatMode {
-            case .none:
-                return nil
-            case .daily:
-                d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
-            case .weekly:
-                if t.weekdays.isEmpty {
-                    d = cal.date(byAdding: .weekOfYear, value: 1, to: d) ?? d.addingTimeInterval(604800)
-                } else {
-                    let set = Set(t.weekdays)
-                    repeat {
-                        d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
-                    } while !set.contains(cal.component(.weekday, from: d))
-                }
-            case .weekday:
-                repeat {
-                    d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
-                } while cal.isDateInWeekend(d)
-            case .monthly:
-                d = cal.date(byAdding: .month, value: 1, to: d) ?? d.addingTimeInterval(2592000)
-            }
-            if d > Date() { return d }
+            let next = t.stepForward(from: d, calendar: cal)
+            // 防御：规则实现出问题时别把循环卡死（stepForward 理论上必然前进）
+            if next <= d { return nil }
+            d = next
+            if d > floor { return d }
         }
         return d
     }

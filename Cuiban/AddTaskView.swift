@@ -7,6 +7,8 @@ struct AddTaskView: View {
     @State private var draft: TaskItem
     @State private var customInterval: String = ""
     @State private var useCustom = false
+    /// 「每几天」的天数输入框内容（独立成字符串，清空重输时不会立刻被夹成 1）
+    @State private var dayIntervalText: String = "2"
 
     // MARK: 照片
 
@@ -48,6 +50,7 @@ struct AddTaskView: View {
             _useCustom = State(initialValue: e.intervalMinutes > 0 &&
                                ![1, 2, 3, 5, 10, 15, 20, 30, 60].contains(e.intervalMinutes))
             _customInterval = State(initialValue: e.intervalMinutes > 0 ? String(e.intervalMinutes) : "")
+            _dayIntervalText = State(initialValue: String(max(1, e.dayInterval)))
             _photos = State(initialValue: e.photos.compactMap { name in
                 AttachmentStore.load(name).map { PhotoSlot(image: $0, fileName: name) }
             })
@@ -122,6 +125,21 @@ struct AddTaskView: View {
                     }
                     if draft.repeatMode == .weekly {
                         weekdayChips
+                    }
+                    if draft.repeatMode == .everyNDays {
+                        HStack {
+                            Text("每隔")
+                            TextField("2", text: $dayIntervalText)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.center)
+                                .frame(width: 56)
+                                .textFieldStyle(.roundedBorder)
+                            Text("天一次机会")
+                            Spacer()
+                        }
+                    }
+                    if draft.repeatMode == .monthlyDays {
+                        monthDayGrid
                     }
                 }
             }
@@ -397,11 +415,56 @@ struct AddTaskView: View {
         .padding(.vertical, 2)
     }
 
+    /// 「每月几号」：1~31 排成 7 列网格，可多选。
+    /// 选两个（如 1、15）就是「一月两次机会」，选四个就是四次。
+    private var monthDayGrid: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 7),
+                spacing: 6
+            ) {
+                ForEach(1...31, id: \.self) { d in
+                    Button {
+                        toggleMonthDay(d)
+                    } label: {
+                        Text("\(d)")
+                            .font(.app(13, weight: .medium))
+                            .frame(maxWidth: .infinity)
+                            .frame(height: 32)
+                            .background(draft.monthDays.contains(d) ? brandColor : Color.gray.opacity(0.16))
+                            .foregroundColor(draft.monthDays.contains(d) ? .white : .primary)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Text(monthDaySummary)
+                .font(.app(12))
+                .foregroundColor(.secondary)
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var monthDaySummary: String {
+        let ds = Array(Set(draft.monthDays)).filter { (1...31).contains($0) }.sorted()
+        if ds.isEmpty {
+            return "一个都没选，就按提醒时间那天每月一次机会。"
+        }
+        return "已选 \(ds.map { "\($0) 号" }.joined(separator: "、"))，一月 \(ds.count) 次机会。"
+    }
+
     private var repeatFooter: String {
         if draft.repeatMode == .weekly, draft.weekdays.isEmpty {
             return "没有选具体星期几，就按提醒时间那天每周重复一次。"
         }
-        if draft.repeatMode != .none {
+        if draft.repeatMode == .monthlyDays, draft.monthDays.isEmpty {
+            return "选几个日子（1~31 号），每月这几天各来一次机会。"
+        }
+        if draft.repeatMode == .everyNDays {
+            let n = min(365, max(1, Int(dayIntervalText) ?? 2))
+            return "第一次按上面的提醒时间，之后每隔 \(n) 天再来一次（一月约 \(max(1, 30 / n)) 次）。"
+        }
+        if draft.repeatMode.recurs {
             return "点「完成」后会自动生成下一次任务"
         }
         return "只提醒这一次"
@@ -427,6 +490,15 @@ struct AddTaskView: View {
             draft.weekdays.append(wd)
         }
         draft.weekdays.sort { (($0 + 5) % 7) < (($1 + 5) % 7) }
+    }
+
+    private func toggleMonthDay(_ d: Int) {
+        if let i = draft.monthDays.firstIndex(of: d) {
+            draft.monthDays.remove(at: i)
+        } else {
+            draft.monthDays.append(d)
+        }
+        draft.monthDays.sort()
     }
 
     // MARK: - 识别流程
@@ -501,6 +573,14 @@ struct AddTaskView: View {
         if let d = r.dueDate { draft.dueDate = d }
         if let m = r.repeatMode { draft.repeatMode = m }
         draft.weekdays = (r.repeatMode == .weekly) ? r.weekdays : []
+        // 识别结果里带的「每几天」「每月几号」细节跟着一起落地；
+        // 换到别的重复方式时把这些字段清干净，免得残留值跟着新规则一起生效。
+        draft.monthDays = (r.repeatMode == .monthlyDays) ? r.monthDays : []
+        if r.repeatMode == .everyNDays, let n = r.dayInterval {
+            dayIntervalText = String(min(365, max(1, n)))
+        } else if r.repeatMode != .everyNDays {
+            dayIntervalText = "2"
+        }
 
         let titleEmpty = draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         if let t = r.titleSuggestion, titleEmpty || titleAutoFilled {
@@ -556,6 +636,16 @@ struct AddTaskView: View {
         }
 
         if t.repeatMode != .weekly { t.weekdays = [] }
+        if t.repeatMode == .everyNDays {
+            t.dayInterval = min(365, max(1, Int(dayIntervalText) ?? 2))
+        } else {
+            t.dayInterval = 2
+        }
+        if t.repeatMode == .monthlyDays {
+            t.monthDays = Array(Set(t.monthDays)).filter { (1...31).contains($0) }.sorted()
+        } else {
+            t.monthDays = []
+        }
 
         // 照片：新选的落盘，老的沿用，被删掉的从磁盘清掉
         var names: [String] = []

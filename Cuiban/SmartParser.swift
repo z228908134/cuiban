@@ -15,6 +15,10 @@ struct SmartParseResult {
     var weekdays: [Int] = []
     /// 每月几号
     var monthDay: Int? = nil
+    /// 「每几天」的间隔天数（一月多次机会的抢购类任务用）
+    var dayInterval: Int? = nil
+    /// 「每月几号」选中的全部日期，例：[1, 15]
+    var monthDays: [Int] = []
     /// 给用户的提示（例如规则做了近似处理）
     var tips: [String] = []
     /// OCR 原文 / 用户输入的原文
@@ -30,6 +34,23 @@ struct SmartParseResult {
         if dueDate != nil { return true }
         if let m = repeatMode, m != .none { return true }
         return false
+    }
+
+    /// 重复规则的说明文案。识别结果里可能带「每几天」「每月几号」的细节，
+    /// 而 repeatLabel(_:weekdays:) 拿不到这些字段，所以这里单独派发一次。
+    var repeatSummary: String {
+        guard let m = repeatMode, m != .none else { return "无" }
+        switch m {
+        case .everyNDays:
+            let n = max(1, dayInterval ?? 2)
+            return n == 1 ? "每天" : "每 \(n) 天"
+        case .monthlyDays:
+            let ds = Array(Set(monthDays)).filter { (1...31).contains($0) }.sorted()
+            guard !ds.isEmpty else { return "每月" }
+            return "每月 " + ds.map { "\($0) 号" }.joined(separator: "、")
+        default:
+            return repeatLabel(m, weekdays: weekdays)
+        }
     }
 
     /// 界面上的一行摘要
@@ -48,7 +69,7 @@ struct SmartParseResult {
             parts.append("时间未识别到")
         }
         if let m = repeatMode, m != .none {
-            parts.append(repeatLabel(m, weekdays: weekdays))
+            parts.append(repeatSummary)
         }
         return "识别到：" + parts.joined(separator: " · ")
     }
@@ -68,7 +89,7 @@ struct SmartParseResult {
             out.append("时间：没识别到，请手动确认")
         }
         if let m = repeatMode, m != .none {
-            out.append("重复：\(repeatLabel(m, weekdays: weekdays))")
+            out.append("重复：\(repeatSummary)")
         } else {
             out.append("重复：无")
         }
@@ -197,9 +218,21 @@ enum SmartParser {
 
         if firstMatch("工作日|周[一二三四五]\\s*(?:至|到|~|-)\\s*周?[一二三四五]|每(?:周|星期|礼拜)[一二三四五]\\s*(?:至|到|~)\\s*[一二三四五]", in: flat) != nil {
             mode = .weekday
-        } else if let m = firstMatch("每(?:个)?月(?:(\\d{1,2})\\s*[号日])?", in: flat) {
+        } else if let m = firstMatch("每(?:个)?月\\s*(\\d{1,2})\\s*[号日](?:\\s*[、,，和及与/\\+]\\s*(\\d{1,2})\\s*[号日])?(?:\\s*[、,，和及与/\\+]\\s*(\\d{1,2})\\s*[号日])?", in: flat) {
+            // 「每月 1 号」是一个月一次，「每月 1 号、15 号」是一个月两次机会，
+            // 后者要走 monthlyDays，否则会当成「每月 1 号」把 15 号这次漏掉
+            let ds = (1..<m.groups.count)
+                .compactMap { Int(m.groups[$0]) }
+                .filter { (1...31).contains($0) }
+            r.monthDay = ds.first
+            if ds.count >= 2 {
+                mode = .monthlyDays
+                r.monthDays = Array(Set(ds)).sorted()
+            } else {
+                mode = .monthly
+            }
+        } else if firstMatch("每(?:个)?月", in: flat) != nil {
             mode = .monthly
-            if m.groups.count > 1, let d = Int(m.groups[1]) { r.monthDay = d }
         } else if let m = firstMatch("每(?:周|星期|礼拜)([一二三四五六日天](?:[、,，和及/\\+]*(?:周|星期|礼拜)?[一二三四五六日天])*)", in: flat) {
             mode = .weekly
             for ch in m.groups[1] {
@@ -207,9 +240,15 @@ enum SmartParser {
             }
         } else if firstMatch("每(?:周|星期|礼拜)", in: flat) != nil {
             mode = .weekly
-        } else if let m = firstMatch("每隔\\s*(\\d{1,2})\\s*天", in: flat) {
-            mode = .daily
-            r.tips.append("原文是「每隔\(m.groups[1])天」，本 App 目前只能按「每天」重复，已按每天处理")
+        } else if let m = firstMatch("每(?:隔)?\\s*(\\d{1,2})\\s*天", in: flat),
+                  let n = Int(m.groups[1]), (1...365).contains(n) {
+            // 「每隔 7 天」「每 3 天」这类：以前只能降级成「每天」，现在按真实间隔走
+            if n == 1 {
+                mode = .daily
+            } else {
+                mode = .everyNDays
+                r.dayInterval = n
+            }
         } else if firstMatch("每天|每日|天天|每一天|每晚|每早|每日一次|一天一次|每早一次", in: flat) != nil {
             mode = .daily
         }
@@ -241,8 +280,9 @@ enum SmartParser {
             dayStart = cal.startOfDay(for: d < today0 ? (makeDate(cal.component(.year, from: now) + 1, mo, da, cal) ?? d) : d)
         }
 
-        // 每月 N 号
-        if dayStart == nil, mode == .monthly, let md = r.monthDay, (1...31).contains(md) {
+        // 每月 N 号（一月多次机会时取最近的那一个当首次时间）
+        if dayStart == nil, (mode == .monthly || mode == .monthlyDays),
+           let md = r.monthDay ?? r.monthDays.min(), (1...31).contains(md) {
             var c = DateComponents()
             c.day = md
             if let d = cal.nextDate(after: now, matching: c, matchingPolicy: .nextTime) {
@@ -325,7 +365,7 @@ enum SmartParser {
             var d = cal.date(from: comps) ?? now
             if d <= now {
                 if mode != .none {
-                    d = rollForward(d, mode: mode, weekdays: weekdays, cal: cal, now: now)
+                    d = rollForward(d, mode: mode, weekdays: weekdays, dayInterval: r.dayInterval ?? 2, monthDays: r.monthDays, cal: cal, now: now)
                 } else {
                     d = now.addingTimeInterval(30 * 60)
                     r.tips.append("原文的时间已经过去了，先按 30 分钟后处理")
@@ -339,7 +379,7 @@ enum SmartParser {
             comps.second = 0
             var d = cal.date(from: comps) ?? now
             if d <= now, mode != .none {
-                d = rollForward(d, mode: mode, weekdays: weekdays, cal: cal, now: now)
+                d = rollForward(d, mode: mode, weekdays: weekdays, dayInterval: r.dayInterval ?? 2, monthDays: r.monthDays, cal: cal, now: now)
             }
             if d <= now { d = now.addingTimeInterval(60 * 60) }
             setReminder(&r, event: d, now: now)
@@ -367,6 +407,7 @@ enum SmartParser {
             "大后天|后天|明晚|明早|明天|明日|今晚|今早|今天|今日",
             "(?:下下|下|本|这)?\\s*(?:周|星期|礼拜)\\s*[一二三四五六日天]",
             "每(?:个)?月(?:\\d{1,2}\\s*[号日])?",
+            "[、,，]\\s*\\d{1,2}\\s*[号日]",
             "每(?:周|星期|礼拜)[一二三四五六日天、,，和及/\\+]*",
             "每(?:周|星期|礼拜)",
             "每隔\\s*\\d{1,2}\\s*天",
@@ -409,32 +450,23 @@ enum SmartParser {
     // MARK: 按重复规则往后推
 
     private static func rollForward(_ date: Date, mode: RepeatMode, weekdays: [Int],
+                                    dayInterval: Int, monthDays: [Int],
                                     cal: Calendar, now: Date) -> Date {
+        guard mode != .none else { return now.addingTimeInterval(30 * 60) }
+        // 规则本身走 TaskItem.stepForward —— 和 App 里显示的、完成时生成的下一次
+        // 完全同一份实现，不会出现「识别出来的时间」和「实际重复出来的时间」不一致。
+        var t = TaskItem()
+        t.repeatMode = mode
+        t.weekdays = weekdays
+        t.dayInterval = dayInterval
+        t.monthDays = monthDays
+
         var d = date
-        var guardCount = 0
-        while d <= now && guardCount < 400 {
-            guardCount += 1
-            switch mode {
-            case .none:
-                return now.addingTimeInterval(30 * 60)
-            case .daily:
-                d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
-            case .weekday:
-                repeat {
-                    d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
-                } while cal.isDateInWeekend(d)
-            case .weekly:
-                if weekdays.isEmpty {
-                    d = cal.date(byAdding: .weekOfYear, value: 1, to: d) ?? d.addingTimeInterval(604800)
-                } else {
-                    let set = Set(weekdays)
-                    repeat {
-                        d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
-                    } while !set.contains(cal.component(.weekday, from: d))
-                }
-            case .monthly:
-                d = cal.date(byAdding: .month, value: 1, to: d) ?? d.addingTimeInterval(2592000)
-            }
+        for _ in 0..<400 {
+            if d > now { return d }
+            let next = t.stepForward(from: d, calendar: cal)
+            if next <= d { return d }
+            d = next
         }
         return d
     }
@@ -527,12 +559,29 @@ private func weekdayName(_ wd: Int) -> String {
     }
 }
 
+/// 已存在任务用的重复说明（能拿到「每几天」的天数和「每月几号」的日期）
+func repeatLabel(_ t: TaskItem) -> String {
+    switch t.repeatMode {
+    case .everyNDays:
+        let n = max(1, t.dayInterval)
+        return n == 1 ? "每天" : "每 \(n) 天（一月约 \(max(1, 30 / n)) 次）"
+    case .monthlyDays:
+        let ds = Array(Set(t.monthDays)).filter { (1...31).contains($0) }.sorted()
+        guard !ds.isEmpty else { return "每月" }
+        return "每月 " + ds.map { "\($0) 号" }.joined(separator: "、")
+    default:
+        return repeatLabel(t.repeatMode, weekdays: t.weekdays)
+    }
+}
+
 func repeatLabel(_ m: RepeatMode, weekdays: [Int]) -> String {
     switch m {
     case .none:
         return "无"
     case .daily:
         return "每天"
+    case .everyNDays:
+        return "每几天"
     case .weekly:
         if weekdays.isEmpty { return "每周" }
         let names = weekdays.sorted { (($0 + 5) % 7) < (($1 + 5) % 7) }.map { weekdayName($0) }
@@ -541,6 +590,8 @@ func repeatLabel(_ m: RepeatMode, weekdays: [Int]) -> String {
         return "工作日（周一至周五）"
     case .monthly:
         return "每月"
+    case .monthlyDays:
+        return "每月几号"
     }
 }
 

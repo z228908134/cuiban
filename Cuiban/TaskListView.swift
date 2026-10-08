@@ -136,7 +136,12 @@ struct TaskListView: View {
                     Text(t.nagIntervalText(store.settings.defaultIntervalMinutes))
                         .font(.app(11))
                         .foregroundColor(t.isHit ? Color(red: 0.05, green: 0.43, blue: 0.34) : .secondary)
-                    if t.nagCount > 0 && !t.isHit {
+                    if t.isHit {
+                        // 一月多次机会时，「下轮什么时候」比「催了几次」有用得多
+                        Text("下轮 " + fmt(t.hitDeadline, "M/d HH:mm"))
+                            .font(.app(10))
+                            .foregroundColor(.secondary)
+                    } else if t.nagCount > 0 {
                         Text("催 \(t.nagCount) 次")
                             .font(.app(11, weight: .bold))
                             .padding(.horizontal, 7)
@@ -373,9 +378,10 @@ struct TaskDetailView: View {
                 Text(current.isHit
                      ? "任务会留在清单的「已抢到」里，每天 \(fmt(current.dueDate, "HH:mm")) 提醒一次；"
                         + "到 \(timeLabel(current.hitDeadline)) 自动收起，那时会重新开始催抢。"
-                     : "适合「活动持续一月、但一月只有一次机会」的任务。点了之后任务不消失，"
-                        + "提醒从每 \(current.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟降为每天一次"
-                        + "（沿用任务本身的时分），到下次机会时刻自动收起。")
+                     : "抢购 / 报名类任务用：抢到了点一下，任务不消失，提醒从每 "
+                        + "\(current.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟降为每天一次"
+                        + "（沿用任务本身的时分），到下次机会时刻自动收起、重新开始催抢。"
+                        + "重复设成「每 7 天」就是一月 4 次机会，「每月 1 号、15 号」就是一月 2 次。")
                     .font(.app(12))
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -429,6 +435,9 @@ struct TaskDetailView: View {
             return "不重复"
         case .daily:
             return "每天"
+        case .everyNDays:
+            let n = max(1, t.dayInterval)
+            return n == 1 ? "每天" : "每 \(n) 天（一月约 \(max(1, 30 / n)) 次机会）"
         case .weekday:
             return "工作日"
         case .weekly:
@@ -438,6 +447,10 @@ struct TaskDetailView: View {
             return "每周 " + sorted.map { "周\(names[$0] ?? "?")" }.joined(separator: "、")
         case .monthly:
             return "每月"
+        case .monthlyDays:
+            let ds = Array(Set(t.monthDays)).filter { (1...31).contains($0) }.sorted()
+            guard !ds.isEmpty else { return "每月" }
+            return "每月 " + ds.map { "\($0) 号" }.joined(separator: "、")
         }
     }
 

@@ -211,6 +211,12 @@ enum NotificationScheduler {
         }
 
         for i in 0..<limit {
+            // 已抢到：每日提醒不越过下次机会时刻。
+            // 机会很密时（例如「每 3 天一轮」）这条可能压根排不上，那就不排 ——
+            // 反正到点 AlarmLoop 会把任务收起重回高频催抢，提前插一条
+            // 「该抢了」的每日提醒只会和真正的催抢提醒撞在一起。
+            if task.isHit, fire >= task.hitDeadline { break }
+
             let content = UNMutableNotificationContent()
             if task.isHit {
                 content.title = "📌 " + task.title

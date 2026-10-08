@@ -183,14 +183,18 @@ enum AIService {
         只输出一个 JSON 对象，不要 markdown 代码块，不要任何解释文字。字段如下：
         title：字符串，任务标题，不超过 20 个字，去掉表情和多余符号
         due：字符串，格式 "yyyy-MM-dd HH:mm"。能判断出具体日期就填；能判断日期但原文没给时间就填 09:00；完全判断不出日期就填空字符串 ""
-        repeat："none" / "daily" / "weekly" / "weekday" / "monthly" 五选一
+        repeat："none" / "daily" / "everyndays" / "weekly" / "weekday" / "monthly" / "monthlydays" 七选一
         weekdays：字符串数组。仅当 repeat 为 "weekly" 且原文指定了星期几时填写，用「一」「二」「三」「四」「五」「六」「日」，否则给空数组
+        dayInterval：数字。仅当 repeat 为 "everyndays" 时填写，表示隔几天一次，否则给 0
+        monthDays：数字数组。仅当 repeat 为 "monthlydays" 时填写，一个月里的哪几号，例 [1, 15]，否则给空数组
         reason：字符串，一句话说明你的判断依据，中文
 
         规则提示：
         - 「明天」「下周一」「3 天后」这类都按当前时间往后算，due 必须是未来的日期
         - 「工作日」「周一到周五」→ repeat 用 "weekday"
         - 「每月 10 号」→ repeat 用 "monthly"，due 填最近的那个 10 号
+        - 「每月 1 号、15 号」这种一个月好几次机会的 → repeat 用 "monthlydays"，monthDays 填 [1, 15]
+        - 「每隔 7 天」「每 3 天一轮」→ repeat 用 "everyndays"，dayInterval 填 7 / 3
         - 「每天」→ "daily"；「每周三」→ "weekly" + weekdays ["三"]
         - 原文没有提到任何时间信息时，due 填空字符串，repeat 用 "none"
         """
@@ -240,7 +244,33 @@ enum AIService {
             }
         }
         if let rep = dict["repeat"] as? String {
-            r.repeatMode = RepeatMode(rawValue: rep.trimmingCharacters(in: .whitespaces).lowercased()) ?? RepeatMode.none
+            r.repeatMode = repeatModeFromAI(rep)
+        }
+        // 识别侧的原始值大小写不可控（模型可能给 everyNDays / everyndays），
+        // 所以不能直接 RepeatMode(rawValue:)，否则会静默变成「不重复」。
+        if let n = aiInt(dict["dayInterval"]), (1...365).contains(n) {
+            r.dayInterval = n
+        }
+        if let n = aiInt(dict["monthDay"]), (1...31).contains(n) {
+            r.monthDay = n
+        }
+        if let ds = aiIntArray(dict["monthDays"]), !ds.isEmpty {
+            r.monthDays = ds
+            r.monthDay = ds.first
+        }
+        // 兜底：说要「一月多次」却一个日期都没给 → 退回「每月」；
+        // 说要「每几天」却给了 1 天 → 就是「每天」。
+        if r.repeatMode == .monthlyDays, r.monthDays.isEmpty {
+            r.repeatMode = .monthly
+        }
+        if r.repeatMode == .everyNDays {
+            let n = r.dayInterval ?? 1
+            if n <= 1 {
+                r.repeatMode = .daily
+                r.dayInterval = nil
+            } else {
+                r.dayInterval = n
+            }
         }
         if let wds = dict["weekdays"] as? [String] {
             var out: [Int] = []
@@ -255,6 +285,53 @@ enum AIService {
             r.tips.append(reason.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return r
+    }
+
+    // MARK: 识别结果的宽松取值
+    //
+    // 接口返回的是模型自由生成的 JSON，字段类型经常飘：
+    // 明明是数字会带成字符串「7」，明明是数组会带成 "1,15"。
+    // 这三个小工具把这些情况都吃掉，避免整条识别结果因为一个字段崩掉。
+
+    /// "everyNDays" / "everyndays" / "every_n_days" 都要认
+    static func repeatModeFromAI(_ s: String) -> RepeatMode {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch t {
+        case "", "none", "no", "null": return .none
+        case "daily", "everyday", "every_day": return .daily
+        case "everyndays", "every_n_days", "everynday", "everyn_days": return .everyNDays
+        case "weekly", "everyweek": return .weekly
+        case "weekday", "weekdays": return .weekday
+        case "monthly", "everymonth": return .monthly
+        case "monthlydays", "monthly_days", "monthlyday": return .monthlyDays
+        default: return .none
+        }
+    }
+
+    private static func aiInt(_ any: Any?) -> Int? {
+        if let n = any as? Int { return n }
+        if let n = any as? Double { return Int(n) }
+        if let s = any as? String {
+            // "15" / "15 号" / "隔 15 天" 都能取出 15
+            let digits = s.filter { $0.isNumber }
+            return digits.isEmpty ? nil : Int(digits)
+        }
+        return nil
+    }
+
+    private static func aiIntArray(_ any: Any?) -> [Int]? {
+        var raw: [Int] = []
+        if let arr = any as? [Int] {
+            raw = arr
+        } else if let arr = any as? [Any] {
+            raw = arr.compactMap { aiInt($0) }
+        } else if let s = any as? String {
+            // 可能给成 "1,15" 或 "1、15 号"
+            raw = s.components(separatedBy: CharacterSet(charactersIn: ",，、;； /"))
+                .compactMap { aiInt($0) }
+        }
+        let ds = Array(Set(raw.filter { (1...31).contains($0) })).sorted()
+        return ds.isEmpty ? nil : ds
     }
 
     private static func extractJSONObject(_ s: String) -> String? {

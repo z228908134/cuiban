@@ -396,7 +396,7 @@ struct MonthView: View {
                 if e.projected {
                     DueBadge(task: e.task, now: Date(), size: 11,
                              timeOverride: e.date,
-                             extraOverride: "重复\(repeatLabel(e.task.repeatMode, weekdays: e.task.weekdays))")
+                             extraOverride: "重复\(repeatLabel(e.task))")
                 } else {
                     DueBadge(task: e.task, now: Date(), size: 11)
                 }
@@ -474,7 +474,7 @@ struct MonthView: View {
         var map: [Date: [DayEntry]] = [:]
 
         for t in store.tasks {
-            if t.repeatMode == .none || t.isDone {
+            if !t.repeatMode.recurs || t.isDone {
                 let d = t.effectiveDue
                 if d >= start && d < end {
                     map[cal.startOfDay(for: d), default: []].append(
