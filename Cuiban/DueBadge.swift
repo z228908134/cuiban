@@ -91,13 +91,16 @@ struct DueBadge: View {
                     Color(red: 0.64, green: 0.18, blue: 0.18),
                     Color(red: 0.99, green: 0.92, blue: 0.92))
         }
-        // 今天 / 明天：橙底
+        // 今天 / 明天：橙底。
+        // timeLabel 自己就会带「今天 / 明天」字样，这里**别再拼前缀** ——
+        // 原来 "今天 " + timeLabel(due) 会拼出「今天 今天 14:00」「今天 明天 08:55」，
+        // 用户看到的就是这串莫名其妙的双日期，还以为今天还在催。
         let cal = Calendar.current
         let days = cal.dateComponents([.day],
                                       from: cal.startOfDay(for: now),
                                       to: cal.startOfDay(for: due)).day ?? 0
         if days <= 1 {
-            return ("今天 " + timeLabel(due), quotaNote ?? ("还有 " + human(diff)),
+            return (timeLabel(due), quotaNote ?? ("还有 " + human(diff)),
                     Color(red: 0.52, green: 0.31, blue: 0.04),
                     Color(red: 0.98, green: 0.91, blue: 0.84))
         }

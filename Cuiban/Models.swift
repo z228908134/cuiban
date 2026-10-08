@@ -551,6 +551,10 @@ final class TaskStore: ObservableObject {
     ///   「已抢到」自动收起时由 rollOverHitTasks 传入，把这次机会本身保留下来。
     func complete(id: String?, nextFloor: Date? = nil) {
         guard let id = id, let i = index(of: id) else { return }
+        // 已经完成过的不能再「再完成一次」：
+        // 双击、或者点了一条还挂在通知中心里的旧通知，都会走到这里。
+        // 没有这道闸的话，每次都会再排一条下一轮，清单里凭空多出几条重复任务。
+        guard !tasks[i].isDone else { return }
         let old = tasks[i]
         tasks[i].isDone = true
         tasks[i].doneAt = Date()
