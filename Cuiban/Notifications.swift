@@ -299,9 +299,11 @@ enum NotificationScheduler {
     /// pending 和已经送达躺在通知中心里的都清。
     static func removeAll(for taskId: String) {
         let c = center()
+        // 注意：pending 回调给的直接就是 UNNotificationRequest（没有 .request 一层），
+        // delivered 给的是 UNNotification 才需要 .request。
         c.getPendingNotificationRequests { pending in
             let ids = pending
-                .filter { ($0.request.content.userInfo["taskId"] as? String) == taskId }
+                .filter { ($0.content.userInfo["taskId"] as? String) == taskId }
                 .map { $0.identifier }
             if !ids.isEmpty {
                 c.removePendingNotificationRequests(withIdentifiers: ids)
