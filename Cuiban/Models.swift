@@ -27,6 +27,18 @@ enum RepeatMode: String, Codable, CaseIterable, Identifiable {
     var recurs: Bool { self != .none }
 }
 
+/// 两种任务形式：
+/// · 做的任务——周期型（每天打卡 / 每周领 / 每月做），按重复规则催，点「完成」生成下一次；
+/// · 抢的任务——抢购 / 报名型（限量机会），按「机会」节奏催，抢到要打卡、到点收起重开。
+/// 只影响表单展示与文案；老数据按 quota 推断（≥2 视为抢购型）。
+enum TaskKind: String, Codable, CaseIterable, Identifiable {
+    case doing, grabbing
+
+    var id: String { rawValue }
+    var label: String { self == .doing ? "做的任务" : "抢的任务" }
+    var desc: String { self == .doing ? "周期型：每天 / 每周 / 每月重复做" : "抢购型：限量机会，抢到要打卡" }
+}
+
 // MARK: - 任务
 
 struct TaskItem: Identifiable, Codable, Equatable {
@@ -79,7 +91,9 @@ struct TaskItem: Identifiable, Codable, Equatable {
     }
 
     /// 配额型：本周期有多个可累加的机会
-    var isQuotaTask: Bool { quota >= 2 }
+    var isQuotaTask: Bool { kind == .grabbing && quota >= 2 }
+    /// 任务形式（做 / 抢）。默认做；老数据读档时按机会次数推断（quota≥2 → 抢）。
+    var kind: TaskKind = .doing
 
     /// 已经抢到过至少一次
     var isHit: Bool { hitCount > 0 || hitAt != nil }
@@ -281,7 +295,7 @@ extension TaskItem {
     enum CodingKeys: String, CodingKey {
         case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays, photos,
              isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil, hitAt,
-             dayInterval, monthDays, hitCount, quota, endDate
+             dayInterval, monthDays, hitCount, quota, endDate, kind
     }
 
     init(from decoder: Decoder) throws {
@@ -311,6 +325,11 @@ extension TaskItem {
         // 否则那些已经点过「已抢到」的任务会被当成「一次都没抢过」而重新高频催。
         if hitCount == 0, hitAt != nil { hitCount = 1 }
         if quota < 1 { quota = 1 }
+        // v1.19 之前没有 kind：机会次数 ≥2 的一定是抢购型，其余按「做」处理。
+        // 单次机会的老抢购任务（quota=1）会落到「做」——功能上无损：
+        // 它的点完成 / 抢到按钮行为不受 kind 影响，只是表单默认展示成周期型。
+        kind = try c.decodeIfPresent(TaskKind.self, forKey: .kind)
+            ?? (quota >= 2 ? .grabbing : .doing)
     }
 }
 

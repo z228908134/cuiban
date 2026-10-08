@@ -192,10 +192,10 @@ struct TaskListView: View {
             }
             .tint(Color(red: 0.98, green: 0.58, blue: 0.00))
 
-            // 抢到 / 撤销。抢购类任务用：
+            // 抢到 / 撤销。只给抢购型任务（「做」的任务没有抢的概念）：
             //   · 单次机会型：抢到后任务不消失，催促降为每天一次，到下轮机会自动收起；
             //   · 配额型（一月 N 次）：每点一次记一次，没满继续按原节奏催。
-            if !t.isDone {
+            if !t.isDone && t.kind == .grabbing {
                 Button {
                     if t.inHitGroup {
                         store.undoHit(id: t.id)
@@ -408,7 +408,8 @@ struct TaskDetailView: View {
 
     @ViewBuilder
     private var hitBlock: some View {
-        if !current.isDone {
+        // 抢购型专属；「做」的任务走到这就该点完成，没有「抢到」的概念
+        if !current.isDone && current.kind == .grabbing {
             VStack(alignment: .leading, spacing: 10) {
                 Text(hitTitle)
                     .font(.app(15, weight: .semibold))
