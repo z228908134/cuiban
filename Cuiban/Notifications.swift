@@ -88,6 +88,26 @@ enum NotificationScheduler {
             // 这里兜底的是「App 长期没打开」的情况，避免活动结束后还在每天提醒）
             let now = Date()
             let active = tasks.filter { !$0.shouldRollOver(at: now) }
+            let activeIds = Set(active.map { $0.id })
+
+            // 已送达、还挂在通知中心里的也要对账：任务已经完成 / 删除的，
+            // 那条「到点了」还躺在通知中心，点一下就弹催促页，看起来就像
+            // 「都完成了还在提醒」。顺带把更新替换 App 前旧版本排的、
+            // 现在已经没有对应活跃任务的存货也一并清掉 —— iOS 更新 App
+            // 不会清空系统里的待发/已发通知，全靠这里在打开时兜底。
+            c.getDeliveredNotifications { delivered in
+                let stale = delivered
+                    .filter { req in
+                        guard req.request.identifier.hasPrefix(idPrefix) else { return false }
+                        guard let tid = req.request.content.userInfo["taskId"] as? String else { return true }
+                        return !activeIds.contains(tid)
+                    }
+                    .map { $0.request.identifier }
+                if !stale.isEmpty {
+                    c.removeDeliveredNotifications(withIdentifiers: stale)
+                }
+            }
+
             guard !active.isEmpty else { return }
 
             // 槽位按紧迫程度竞标分配（见 allocate 注释），不再按任务数平均切
@@ -266,6 +286,34 @@ enum NotificationScheduler {
             )
             c.add(request)
             fire = fire.addingTimeInterval(step)
+        }
+    }
+
+    // MARK: 单任务撤防
+
+    /// 把某条任务的待发 + 已送达通知全部撤掉。
+    ///
+    /// 完成 / 删除任务时**立即**调用，不走 rescheduleAll 的 0.4 秒去抖：
+    /// 那条延迟是为了合并连续改动，但代价是「改完马上被杀」时清理根本没跑 ——
+    /// 旧网格的催促会一直留在系统里按老节奏响。这里直接按 taskId 对账，
+    /// pending 和已经送达躺在通知中心里的都清。
+    static func removeAll(for taskId: String) {
+        let c = center()
+        c.getPendingNotificationRequests { pending in
+            let ids = pending
+                .filter { ($0.request.content.userInfo["taskId"] as? String) == taskId }
+                .map { $0.identifier }
+            if !ids.isEmpty {
+                c.removePendingNotificationRequests(withIdentifiers: ids)
+            }
+        }
+        c.getDeliveredNotifications { delivered in
+            let ids = delivered
+                .filter { ($0.request.content.userInfo["taskId"] as? String) == taskId }
+                .map { $0.request.identifier }
+            if !ids.isEmpty {
+                c.removeDeliveredNotifications(withIdentifiers: ids)
+            }
         }
     }
 

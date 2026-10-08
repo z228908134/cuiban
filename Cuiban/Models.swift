@@ -543,6 +543,8 @@ final class TaskStore: ObservableObject {
         tasks.removeAll { $0.id == id }
         save()
         AlarmCenter.shared.dismiss()
+        // 这条任务没了，它的待发和已送达通知立即撤掉，不等重排的去抖
+        NotificationScheduler.removeAll(for: id)
         NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
     }
 
@@ -560,6 +562,12 @@ final class TaskStore: ObservableObject {
         tasks[i].doneAt = Date()
         tasks[i].snoozeUntil = nil
 
+        // 这条已经完成了：它的待发和已送达通知立即撤掉。
+        // 不等 rescheduleAll 的 0.4 秒去抖 —— 完成后 App 马上被杀/被更新替换，
+        // 那次清理就丢了，旧催促会按老节奏继续响，用户看到的就是
+        // 「都点完成了怎么还在推送」。
+        NotificationScheduler.removeAll(for: id)
+
         // 配额型任务和重复任务都要把下一轮排出来：
         //   重复任务 → 按重复规则算下一次机会；
         //   配额型   → 周期固定一个月，下一轮就是「本周期起点 + 1 个月」。
@@ -575,19 +583,28 @@ final class TaskStore: ObservableObject {
         // 推算出来的下一轮如果已经越过结束时间，那它根本不会开始，别排了
         if let e = old.endDate, let n = next, n > e { next = nil }
         if let next = next {
-            var n = old
-            n.id = UUID().uuidString
-            n.isDone = false
-            n.doneAt = nil
-            n.dueDate = next
-            n.snoozeUntil = nil
-            n.nagCount = 0
-            n.lastNagAt = nil
-            n.createdAt = Date()
-            // 下一条是新周期，必须从「一次都没抢到」开始重新催抢
-            n.hitAt = nil
-            n.hitCount = 0
-            tasks.append(n)
+            // 防重：同标题、同到期时刻的活跃任务已经存在就不再生成。
+            // 通知 action 和界面双击的竞态、同步合并，都曾经生出一轮
+            // 重复任务（清单里凭空多出一条同名的）。
+            let dup = tasks.contains { t in
+                !t.isDone && t.title == old.title
+                    && abs(t.dueDate.timeIntervalSince(next)) < 60
+            }
+            if !dup {
+                var n = old
+                n.id = UUID().uuidString
+                n.isDone = false
+                n.doneAt = nil
+                n.dueDate = next
+                n.snoozeUntil = nil
+                n.nagCount = 0
+                n.lastNagAt = nil
+                n.createdAt = Date()
+                // 下一条是新周期，必须从「一次都没抢到」开始重新催抢
+                n.hitAt = nil
+                n.hitCount = 0
+                tasks.append(n)
+            }
         }
 
         save()

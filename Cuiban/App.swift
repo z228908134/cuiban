@@ -151,19 +151,36 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
-    /// App 在前台时也照样响铃 + 弹催促页
+    /// App 在前台时也照样响铃 + 弹催促页。
+    /// 但得先验明正身：任务已完成 / 已删除 / 还没到点的，是更新前
+    /// 旧版本排进系统队列的存货（iOS 更新 App 不会清空通知队列），
+    /// 弹出来就是「都完成了还在提醒」。不但不弹，还要顺手清掉。
+    private static func vetted(_ taskId: String?) -> (task: TaskItem, live: Bool)? {
+        guard let id = taskId, let t = TaskStore.shared.task(id: id), !t.isDone else {
+            return nil
+        }
+        // 正常的催促只会「到点或到点之后」触发；提前 1 分钟以上的都是存货
+        let live = t.effectiveDue <= Date().addingTimeInterval(60)
+        return (t, live)
+    }
+
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        completionHandler([.banner, .list, .sound])
         let taskId = notification.request.content.userInfo["taskId"] as? String
+        let reqId = notification.request.identifier
         DispatchQueue.main.async {
-            if let id = taskId {
-                TaskStore.shared.markNagged(id: id)
-                AlarmCenter.shared.show(taskId: id)
+            guard let vet = AppDelegate.vetted(taskId), vet.live else {
+                // 存货或已失效：静默吞掉，顺手清出通知中心
+                center.removeDeliveredNotifications(withIdentifiers: [reqId])
+                completionHandler([])
+                return
             }
+            completionHandler([.banner, .list, .sound])
+            TaskStore.shared.markNagged(id: vet.task.id)
+            AlarmCenter.shared.show(taskId: vet.task.id)
         }
     }
 
@@ -181,7 +198,10 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
             case NotificationScheduler.actionSnooze:
                 TaskStore.shared.snooze(id: taskId)
             default:
-                AlarmCenter.shared.show(taskId: taskId)
+                // 点开的是存货（任务没了 / 已完成 / 还没到点）就别弹催促页了
+                if let vet = AppDelegate.vetted(taskId), vet.live {
+                    AlarmCenter.shared.show(taskId: vet.task.id)
+                }
             }
             completionHandler()
         }
