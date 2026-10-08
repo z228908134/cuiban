@@ -246,14 +246,27 @@ final class TaskStore: ObservableObject {
         }
     }
 
+/// 所有改数据的路径最终都会走到这里，所以查询缓存在这里统一失效
     private func save() {
-        let enc = JSONEncoder()
-        enc.outputFormatting = .prettyPrinted
-        if let d = try? enc.encode(tasks) { try? d.write(to: tasksFile) }
-        if let d = try? enc.encode(settings) { try? d.write(to: settingsFile) }
-        BackupStore.autoBackupIfNeeded(tasks: tasks, settings: settings)
-        // 任何数据变化都通知一次：根视图据此触发「同步到 NAS」
-        NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
+        invalidateQueryCache()
+        let t = tasks
+        let s = settings
+        // 全量 JSON 编码 + 磁盘写 + 发全局通知，放后台。
+        // AlarmLoop 每秒会调 markNagged → save()，原来每秒都在主线程做一遍
+        // pretty-print 编码 + 两次文件写，用户打字时能感觉到周期性卡顿。
+        DispatchQueue.global(qos: .utility).async {
+       let enc = JSONEncoder()
+  // 主数据文件不需要人看，prettyPrinted 会让体积和耗时都翻倍
+     enc.outputFormatting = [.sortedKeys]
+            if let d = try? enc.encode(t) { try? d.write(to: self.tasksFile) }
+            if let d = try? enc.encode(s) { try? d.write(to: self.settingsFile) }
+        BackupStore.autoBackupIfNeeded(tasks: t, settings: s)
+   }
+        // 通知改异步投递：post 是同步的，会直接调用 RootView 的 onReceive →
+    // autoSyncIfNeeded。原来会把网络 IO 拉回主线程。
+        DispatchQueue.main.async {
+   NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
+    }
     }
 
     func persistSettings() {
@@ -277,14 +290,46 @@ final class TaskStore: ObservableObject {
     }
 
     // MARK: 查询
+    //
+    // pending / overdue / upcoming / finished 都是 O(n log n)，
+    // 而 body 里 `overdue` 单这一处就被引用了 3 次（App.swift 的 badge、
+    // TaskListView 的行和分区）。原来每个都是独立计算 = 每秒重复 filter+sort 十几次，
+    // 任务多的时候肉眼可见地卡。
+    //
+    // 现在 tasks 一变就缓存一份 pending，overdue/upcoming 从它派生（只是 filter，不再排序）。
+    // finished 单独缓存（倒序排法不一样）。改一处任务后缓存失效重算。
+    private var pendingCache: [TaskItem]?
+    private var finishedCache: [TaskItem]?
+
+    /// 调用方在修改 tasks 后必须调它，否则缓存里的旧数据会让界面不更新
+    func invalidateQueryCache() {
+        pendingCache = nil
+        finishedCache = nil
+    }
 
     var pending: [TaskItem] {
-        tasks.filter { !$0.isDone }.sorted { $0.effectiveDue < $1.effectiveDue }
+        if let c = pendingCache { return c }
+        let c = tasks.filter { !$0.isDone }.sorted { $0.effectiveDue < $1.effectiveDue }
+        pendingCache = c
+        return c
     }
+
     var overdue: [TaskItem] { pending.filter { $0.effectiveDue <= Date() } }
     var upcoming: [TaskItem] { pending.filter { $0.effectiveDue > Date() } }
+
+    /// 只要数量时用它：不用建中间数组
+    var overdueCount: Int {
+        var n = 0
+        let now = Date()
+        for t in pending where t.effectiveDue <= now { n += 1 }
+        return n
+    }
+
     var finished: [TaskItem] {
-        tasks.filter { $0.isDone }.sorted { ($0.doneAt ?? $0.createdAt) > ($1.doneAt ?? $1.createdAt) }
+        if let c = finishedCache { return c }
+        let c = tasks.filter { $0.isDone }.sorted { ($0.doneAt ?? $0.createdAt) > ($1.doneAt ?? $1.createdAt) }
+        finishedCache = c
+        return c
     }
 
     func task(id: String?) -> TaskItem? {
@@ -364,12 +409,25 @@ final class TaskStore: ObservableObject {
     }
 
     /// 记一次催促
+/// 催促页开着时 AlarmLoop 每秒可能调一次。
+    /// 内存态立刻更新（界面上的计数要马上长），落盘节流 10 秒——
+    /// 这个字段丢一点无所谓，崩溃时最多少记几次。
     func markNagged(id: String) {
         guard let i = index(of: id) else { return }
         tasks[i].nagCount += 1
         tasks[i].lastNagAt = Date()
+        invalidateQueryCache()
+
+        let now = Date()
+        if nagPersistLock == nil {
+            nagPersistLock = now
+        }
+        if now.timeIntervalSince(nagPersistLock!) < 10 { return }
+        nagPersistLock = now
         save()
     }
+
+    private var nagPersistLock: Date?
 
     // MARK: 重复任务的下一次时间
 

@@ -129,10 +129,18 @@ final class NoteStore: ObservableObject {
     }
 
     private func save() {
-        let enc = JSONEncoder()
-        enc.outputFormatting = .prettyPrinted
-        if let d = try? enc.encode(notes) { try? d.write(to: file) }
-        NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
+        let snapshot = notes
+        // 笔记自动保存每 0.8 秒就会触发一次，编码+写盘放后台别挡着 UI
+        DispatchQueue.global(qos: .utility).async {
+            let enc = JSONEncoder()
+    enc.outputFormatting = [.sortedKeys]
+     if let d = try? enc.encode(snapshot) { try? d.write(to: self.file) }
+        }
+        // post 是同步投递的，会直接调进 RootView 的 onReceive，
+        // 异步投递避免把网络 IO 带回主线程
+        DispatchQueue.main.async {
+NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
+        }
     }
 
     var sorted: [NoteItem] {

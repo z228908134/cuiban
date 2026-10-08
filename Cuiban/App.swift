@@ -64,7 +64,7 @@ struct RootView: View {
             TabView {
                 TaskListView()
                     .tabItem { Label("清单", systemImage: "checklist") }
-                    .badge(store.overdue.count)
+                    .badge(store.overdueCount)
                 MonthView()
                     .tabItem { Label("日历", systemImage: "calendar") }
                 NotesView()
@@ -81,13 +81,15 @@ struct RootView: View {
             }
         }
         .onAppear {
-            AlarmLoop.shared.start()
-            store.refreshAuth()
+   AlarmLoop.shared.start()
+        store.refreshAuth()
             NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
-            // 进 App 先同步一次：把 NAS 上的新数据拉下来
+  // 进 App 先同步一次 NAS 上的新数据。
+            // **绝对不能放主线程**：WebDAV 走Semaphore 阻塞等待，
+        // 最坏 25 秒首帧全白屏。先让界面出来，同步丢后台延后。
             if CloudSync.currentConfig.isOn {
-                _ = CloudSync.syncNow()
-            }
+CloudSync.syncOnLaunch()
+       }
         }
         .onReceive(NotificationCenter.default.publisher(for: FontScale.didChange)) { _ in
             withAnimation(.easeInOut(duration: 0.12)) { fontRev &+= 1 }

@@ -1,7 +1,9 @@
 import SwiftUI
+import Combine
 
 struct SettingsView: View {
     @EnvironmentObject var store: TaskStore
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var ai = AIStore.shared
     @ObservedObject private var fontScale = FontScale.shared
 
@@ -19,6 +21,12 @@ struct SettingsView: View {
     @State private var photoCount = 0
     @State private var photoSizeText = "0 B"
     @State private var photoNotice: String? = nil
+    /// 「备份与同步」入口右侧摘要用的两个值。后台算好再填进 body，
+    /// 千万别在 body 里现算（listBackups / currentConfig 都是 IO）
+    @State private var backupCount = 0
+    @State private var cloudSummary = CloudSync.currentConfig
+    /// App 回到前台时刷新一次摘要（同步可能在后台改过状态）
+    @State private var wasBackgrounded = false
 
 private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
 
@@ -183,19 +191,22 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
 // 备份与同步挪到二级页了，这里只留一个入口（和「外观与字体」同一套路）
 
         Section {
-     NavigationLink {
-   BackupSyncSettingsView()
+         NavigationLink {
+          BackupSyncSettingsView()
             } label: {
-        HStack {
-         Label("备份与同步", systemImage: "externaldrive")
-        Spacer()
-   Text(BackupStore.settingsSummary(
-    cloudConfig: CloudSync.currentConfig,
-     backupCount: BackupStore.listBackups().count))
-    .font(.app(13))
- .foregroundColor(.secondary)
-       }
-        }
+    HStack {
+          Label("备份与同步", systemImage: "externaldrive")
+      Spacer()
+      // **不能在这里调 listBackups()**：SwiftUI 每次重绘都会求值 body，
+      // 而 listBackups() 是一次目录列举 + N 次 stat，备份多的话更贵。
+      // 用 @State 缓存，onAppear 时后台算一次。
+        Text(BackupStore.settingsSummary(
+      cloudConfig: cloudSummary,
+   backupCount: backupCount))
+   .font(.app(13))
+   .foregroundColor(.secondary)
+     }
+      }
         }
 
                 // MARK: 数据
@@ -226,15 +237,50 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
                 }
             }
             .navigationTitle("设置")
-            .navigationBarTitleDisplayMode(.inline)
-.onAppear {
-                store.refreshAuth()
-      refreshPhotoStats()
+.navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+store.refreshAuth()
+                refreshPhotoStats()
+        refreshBackupSummary()
+        startPendingTimer()
             }
-        }
+  .onChange(of: scenePhase) { p in
+                // TabView 会保留所有 tab，onAppear 只触发一次。
+      // 用户在别的页面改完备份设置回来时，这里重新算一次摘要
+      if p == .active && wasBackgrounded {
+refreshBackupSummary()
+   startPendingTimer()
+      } else if p != .active {
+     pendingTimer?.cancel()
+              pendingTimer = nil
+     }
+        wasBackgrounded = (p != .active)
+     }
+  }
         .navigationViewStyle(.stack)
-.onReceive(Timer.publish(every: 4, on: .main, in: .common).autoconnect()) { _ in
-            store.refreshPendingCount()
+    }
+
+  /// 通知权限的待提醒数：只在设置页可见 + App 在前台时才开定时器。
+    /// 原来挂在 NavigationView 外层的 Timer.publish 是 TabView 常驻的，
+    /// 用户停在清单页也在每 4 秒发一次跨进程请求，顺带把整个 body 拖着重算。
+    @State private var pendingTimer: AnyCancellable? = nil
+
+    private func startPendingTimer() {
+        pendingTimer?.cancel()
+        pendingTimer = Timer.publish(every: 4, on: .main, in: .common)
+            .autoconnect()
+            .sink { _ in store.refreshPendingCount() }
+    }
+
+    /// 后台算好「本地几份备份 + 同步配置」再回主线程填 @State
+    private func refreshBackupSummary() {
+        DispatchQueue.global(qos: .utility).async {
+let n = BackupStore.listBackups().count
+  let c = CloudSync.currentConfig
+      DispatchQueue.main.async {
+    backupCount = n
+    cloudSummary = c
+        }
         }
     }
 

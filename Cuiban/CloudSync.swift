@@ -221,9 +221,12 @@ _ = try FileManager.default.replaceItemAt(u, withItemAt: tmp)
 
     static var historyKeepBindingValue: Int { historyKeep() }
 
-    static func setHistoryKeep(_ v: Int) {
+static func setHistoryKeep(_ v: Int) {
         UserDefaults.standard.set(max(1, v), forKey: "cuiban.cloudHistoryKeep")
-        pruneRemoteHistory()
+        // 修剪要发 PROPFIND + DELETE，绝不能挡着用户拨 Picker 的手
+        DispatchQueue.global(qos: .utility).async {
+            pruneRemoteHistory()
+        }
     }
 
     private static func historyName(_ d: Date) -> String {
@@ -242,17 +245,17 @@ _ = try FileManager.default.replaceItemAt(u, withItemAt: tmp)
         let name = historyName(Date())
         do {
             let c = config
-            if c.mode == "webdav" {
-                guard let cli = webdavClient else { return }
-                try cli.upload(data, as: name)
-            } else {
-guard let dir = localRemoteDir else { return }
-                let u = dir.appendingPathComponent(name)
+    if c.mode == "webdav" {
+      guard let cli = webdavClient else { return }
+       try cli.upload(data, as: name)
+  } else {
+                guard let dir = localRemoteDir else { return }
+   let u = dir.appendingPathComponent(name)
                 try data.write(to: u, options: .atomic)
-     }
-  pruneRemoteHistory()
+            }
+    bumpHistoryCount()
         } catch {
-            print("写远端历史备份失败：\(error.localizedDescription)")
+      print("写远端历史备份失败：\(error.localizedDescription)")
         }
     }
 
@@ -262,24 +265,62 @@ guard let dir = localRemoteDir else { return }
         return URL(fileURLWithPath: c.folder, isDirectory: true)
     }
 
+    // MARK: 历史份数记账
+    //
+    // 原来每次同步完都要 PROPFIND 列一次目录才能知道几份了，
+    // 等于凭空多一个网络往返（同步本身已经是 2 个了）。
+    // 改成：写一份就在本地记一笔，只有「记着可能超限」时才真的去列目录核对。
+    // 计数不可信（用户可能在 NAS 上手动删文件）时，下次设置页会重新校准。
+
+    private static var historyCountKey: String { "cloudsync.historyCount" }
+    /// 记不准/未初始化时用 -1 表示「需要列目录校准」
+    private static var countedHistory: Int {
+        get { UserDefaults.standard.integer(forKey: historyCountKey) }
+        set { UserDefaults.standard.set(newValue, forKey: historyCountKey) }
+    }
+
+    private static func bumpHistoryCount() {
+        let n = countedHistory
+        countedHistory = n < 0 ? n : n + 1
+        // 记着可能超限才去核对（留 2 份的余量，少问一次是一次网络往返）
+        if countedHistory > historyKeep() {
+            pruneRemoteHistory()
+        }
+    }
+
     /// 远端现有的历史备份文件名（已按时间从新到旧排好）
     static func remoteHistoryNames() -> [String] {
         let c = config
         if c.mode == "webdav" {
             guard let cli = webdavClient,
-                  let names = cli.listFileNames() else { return [] }
-      return names.filter { $0.hasPrefix(historyPrefix) && $0.hasSuffix(historySuffix) }
-   .sorted(by: >)
+ let names = cli.listFileNames() else { return [] }
+    let filtered = names
+     .filter { $0.hasPrefix(historyPrefix) && $0.hasSuffix(historySuffix) }
+  .sorted(by: >)
+   // 列过了就顺手校准本地计数
+      if !filtered.isEmpty || names.isEmpty {
+          countedHistory = filtered.count
       }
+            return filtered
+        }
         guard let dir = localRemoteDir,
-          let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
-        return []
-    }
-        return names.filter { $0.hasPrefix(historyPrefix) && $0.hasSuffix(historySuffix) }
-        .sorted(by: >)
+            let names = try? FileManager.default.contentsOfDirectory(atPath: dir.path) else {
+     return []
+  }
+        let filtered = names
+      .filter { $0.hasPrefix(historyPrefix) && $0.hasSuffix(historySuffix) }
+ .sorted(by: >)
+        countedHistory = filtered.count
+ return filtered
     }
 
-    /// 远端历史备份份数（给设置页显示）
+    /// 远端历史备份份数（给设置页显示）。
+    /// 返回 -1 表示「本地没记账、要去列目录」
+    static func remoteHistoryCountIfKnown() -> Int {
+        countedHistory
+    }
+
+    /// 远端历史备份份数（一定准确，但要发网络请求）
     static func remoteHistoryCount() -> Int {
         remoteHistoryNames().count
     }
@@ -287,19 +328,20 @@ guard let dir = localRemoteDir else { return }
     /// 删掉超出上限的旧历史（只留最新的 N 份）
     private static func pruneRemoteHistory() {
         let keep = historyKeep()
-        let names = remoteHistoryNames()
+        let names = remoteHistoryNames() // 内部会校准 countedHistory
         guard names.count > keep else { return }
         let excess = names.dropFirst(keep)
         let c = config
         if c.mode == "webdav" {
-            guard let cli = webdavClient else { return }
+    guard let cli = webdavClient else { return }
             for n in excess { cli.deleteFile(named: n) }
         } else {
-            guard let dir = localRemoteDir else { return }
+         guard let dir = localRemoteDir else { return }
             for n in excess {
-                try? FileManager.default.removeItem(at: dir.appendingPathComponent(n))
-            }
+     try? FileManager.default.removeItem(at: dir.appendingPathComponent(n))
+         }
         }
+        countedHistory = keep
     }
 
     // MARK: 打包 / 解包
@@ -329,9 +371,11 @@ guard let dir = localRemoteDir else { return }
     }
 
 /// 把 payload 编成 JSON（WebDAV 和本地文件夹用的是同一份字节）
-    private static func encode(_ p: BackupPayload) throws -> Data {
+private static func encode(_ p: BackupPayload) throws -> Data {
         let enc = JSONEncoder()
-        enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+        // 不要 prettyPrinted：照片已经 base64 进来了（体积 ×1.33），
+        // 再美化一次白白让内存峰值和编码耗时翻倍
+        enc.outputFormatting = [.sortedKeys]
         enc.dateEncodingStrategy = .iso8601
         return try enc.encode(p)
     }
@@ -484,24 +528,61 @@ private static func push() -> SyncResult {
     }
 
     /// 数据变化后自动同步（节流 30 秒，避免每次改动都写网络）
+    ///
+    /// **绝不能在主线程跑**：一次 syncNow() 在 WebDAV 下是 4~6 个串行网络往返
+    /// （GET / PUT 主文件 / PUT 历史 / PROPFIND 列目录 / 可能 DELETE 修剪），
+    /// 每个都 sem.wait() 阻塞。用户每打几个字就冻一下就是这么来的。
+    /// 节流只限制频率，不解决线程问题。
     private static var lastAutoAt: Date = .distantPast
     private static let autoThrottle: TimeInterval = 30
+    /// 正在跑的同步，用来防止并发（后台化之后可能重入）
+    private static let syncLock = NSLock()
+    private static var syncRunning = false
 
     static func autoSyncIfNeeded() {
+        // UserDefaults + 读三个文件的 stat：这一步很轻，主线程可以做
         let c = config
         guard c.isOn, c.autoSync else { return }
         guard Date().timeIntervalSince(lastAutoAt) > autoThrottle else { return }
         guard hasLocalChanges() else { return }
         lastAutoAt = Date()
-        _ = syncNow()
+        // 网络部分丢后台
+        DispatchQueue.global(qos: .utility).async {
+            guard beginSync() else { return }
+            defer { endSync() }
+            _ = syncNow()
+        }
+    }
+
+    /// 进 App 时的首次同步：延后到界面出来之后再跑
+    static func syncOnLaunch() {
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.8) {
+ guard beginSync() else { return }
+        defer { endSync() }
+  _ = syncNow()
+        }
+    }
+
+    private static func beginSync() -> Bool {
+        syncLock.lock()
+        defer { syncLock.unlock() }
+        if syncRunning { return false }
+        syncRunning = true
+        return true
+    }
+
+    private static func endSync() {
+        syncLock.lock()
+        syncRunning = false
+        syncLock.unlock()
     }
 
     /// 一键检查：先拉后推（设置页「立即同步」按钮）
     static func syncAndReport() -> String {
-        let r = syncNow()
-        // 拉下来之后本地也会变，再推一次把两端对齐
-if case .pulled = r {
-            _ = push()
+    let r = syncNow()
+   // 拉下来之后本地也会变，再推一次把两端对齐
+ if case .pulled = r {
+  _ = push()
         }
         return r.text
     }

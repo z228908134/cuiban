@@ -108,11 +108,16 @@ final class CardStore: ObservableObject {
         }
     }
 
-    private func save() {
-        let enc = JSONEncoder()
-        enc.outputFormatting = .prettyPrinted
-        if let d = try? enc.encode(cards) { try? d.write(to: file, options: .atomic) }
-        NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
+private func save() {
+        let snapshot = cards
+        DispatchQueue.global(qos: .utility).async {
+            let enc = JSONEncoder()
+  enc.outputFormatting = [.sortedKeys]
+        if let d = try? enc.encode(snapshot) { try? d.write(to: self.file, options: .atomic) }
+        }
+        DispatchQueue.main.async {
+   NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
+        }
     }
 
     /// 筛选后的卡片（type = nil 表示全部）

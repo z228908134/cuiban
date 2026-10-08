@@ -357,10 +357,13 @@ if let at = cloudMeta.lastSyncAt {
                     CloudSync.configure(folder: cloudConfig.folder,
                                         includePhotos: v,
                                         autoSync: cloudConfig.autoSync)
-                }
-                _ = CloudSync.syncNow()
-                cloudMeta = CloudSync.currentMeta
-            })
+                       }
+                // 拨一下 Toggle 就发一次同步 = 主线程 4~6 个网络往返，必须后台
+          DispatchQueue.global(qos: .userInitiated).async {
+            _ = CloudSync.syncNow()
+      DispatchQueue.main.async { cloudMeta = CloudSync.currentMeta }
+     }
+   })
     }
 
     // MARK: 操作
@@ -379,8 +382,12 @@ if let at = cloudMeta.lastSyncAt {
         return s
     }
 
+/// 列目录 + 每份一次 stat，放后台。备份多了（可选 50 份）在主线程扫很贵
     private func refreshBackupStats() {
-        backupList = BackupStore.listBackups()
+    DispatchQueue.global(qos: .utility).async {
+            let l = BackupStore.listBackups()
+            DispatchQueue.main.async { self.backupList = l }
+        }
     }
 
     private func doBackupNow() {
@@ -454,20 +461,35 @@ let msg = CloudSync.syncAndReport()
         }
     }
 
+/// 查远端存不存在也是网络请求，后台做，顺便在那边弹框
     private func confirmPullFromCloud() {
         guard cloudConfig.isOn else { return }
-        guard CloudSync.remoteFileExists() else {
-            cloudNotice = "NAS 上还没有数据，先在另一端上传一次"
-            return
+        cloudNotice = "检查中…"
+        DispatchQueue.global(qos: .userInitiated).async {
+let exists = CloudSync.remoteFileExists()
+            DispatchQueue.main.async {
+                if exists {
+                    self.pendingAlert = .pullFromCloud
+                } else {
+      self.cloudNotice = "NAS 上还没有数据，先在另一端上传一次"
+                }
+            }
         }
-pendingAlert = .pullFromCloud
     }
 
     private func doPullFromCloud() {
         // 覆盖前先在本地存一份，出问题能退回来
         BackupStore.autoBackupIfNeeded(tasks: store.tasks, settings: store.settings)
-        cloudNotice = CloudSync.pullOnly().text
-        cloudMeta = CloudSync.currentMeta
+  cloudNotice = "正在从 NAS 下载…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            // restore 会把每张照片 base64 解码 + 写盘、再 replaceAll 三个 Store，
+            // 全是重活，绝对不能放主线程
+            let msg = CloudSync.pullOnly().text
+            DispatchQueue.main.async {
+  self.cloudNotice = msg
+       self.cloudMeta = CloudSync.currentMeta
+            }
+        }
     }
 
     /// 确认框点了「覆盖恢复 / 停止 / 覆盖」之后走这里
@@ -487,17 +509,26 @@ pendingAlert = .pullFromCloud
         pendingAlert = nil
     }
 
-    private func handleFolderPicked(_ url: URL) {
-        guard CloudSync.isFolderWritable(url.path) else {
-            cloudNotice = "这个文件夹读不到（可能没连上 NAS，或没有写入权限）"
-            return
+private func handleFolderPicked(_ url: URL) {
+        cloudNotice = "检查文件夹…"
+        // isFolderWritable 要往目录写探针文件再删（2 次网络往返），后台做
+        DispatchQueue.global(qos: .userInitiated).async {
+            guard CloudSync.isFolderWritable(url.path) else {
+  DispatchQueue.main.async {
+     self.cloudNotice = "这个文件夹读不到（可能没连上 NAS，或没有写入权限）"
+       }
+       return
+         }
+            let photos = self.cloudConfig.includePhotos
+            let auto = self.cloudConfig.autoSync
+            CloudSync.configure(folder: url.path, includePhotos: photos, autoSync: auto)
+   let msg = CloudSync.syncAndReport()
+            DispatchQueue.main.async {
+        self.cloudConfig = CloudSync.currentConfig
+         self.cloudNotice = msg
+   self.cloudMeta = CloudSync.currentMeta
+ }
         }
-        CloudSync.configure(folder: url.path,
-                            includePhotos: cloudConfig.includePhotos,
-                            autoSync: cloudConfig.autoSync)
-        cloudConfig = CloudSync.currentConfig
-        cloudNotice = CloudSync.syncAndReport()
-        cloudMeta = CloudSync.currentMeta
     }
 
     private func fmt(_ d: Date, _ f: String) -> String {

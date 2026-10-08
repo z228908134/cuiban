@@ -144,8 +144,9 @@ struct WebDAVClient {
     private func request(_ url: URL, _ method: String, body: Data? = nil) throws -> Data {
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.httpBody = body
-        req.timeoutInterval = 25
+req.httpBody = body
+        // 25 秒太久：NAS 不在线时用户要干等 25 秒。10 秒够局域网/公网用了
+        req.timeoutInterval = 10
         // Basic 认证头 + 自签名放行都要，所以走带 delegate 的 session，
         // 但认证仍然手动拼头：省掉 challenge 反复重试（有些 NAS 会连着挑战 3 次）
         if !user.isEmpty || !password.isEmpty {
