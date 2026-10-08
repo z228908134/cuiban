@@ -916,7 +916,7 @@ struct NoteBodyEditor: UIViewRepresentable {
         // tv.text 里的附件占位符换回标记字符后再比较
         if Self.plainText(tv.attributedText) != text {
             // 回写整篇时也要保住滚动位置，否则正文一长就跳（见 keepScroll 注释）
-            keepScroll(tv) { tv.text = text }
+            Self.keepScroll(tv) { tv.text = text }
             NoteBodyEditor.restyle(tv, styles: bridge.styles, pending: bridge.pendingTraits)
         }
     }
