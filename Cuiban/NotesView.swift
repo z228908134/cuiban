@@ -106,7 +106,7 @@ extension UIColor {
     var noteHex: String? {
         let c = resolvedColor(with: UITraitCollection.current)
         var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-        guard c.getRed(&r, &g, &b, &a) else { return nil }
+        guard c.getRed(&r, green: &g, blue: &b, alpha: &a) else { return nil }
         return String(format: "#%02X%02X%02X",
                       Int((r * 255).rounded()), Int((g * 255).rounded()), Int((b * 255).rounded()))
     }
