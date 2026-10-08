@@ -43,12 +43,37 @@ enum NotificationScheduler {
         return UNNotificationSound(named: UNNotificationSoundName(rawValue: "nag.wav"))
     }
 
-    // MARK: 重排
+    // MARK: 重排（去抖 + 后台）
+    //
+    // 保存任务 / 完成 / 延后 / 改设置都会调进来。一次重排 =
+    // 查一次待发 → removePendingNotificationRequests（最多 60 条）→
+    // 再 add 最多 60 条，全是跨进程调用。原来是同步执行在调用点那一帧上，
+    // 一次改动就能让「保存」按钮卡住好几百毫秒，连着改几次更明显。
+    //
+    // 现在：延后 0.4 秒合并（同一批改动只排一次）+ 整体丢到串行后台队列，
+    // 调用方立刻返回，界面不受影响。AlarmLoop 每分钟的周期性重排同样受益。
+    private static let rescheduleQueue = DispatchQueue(label: "cuiban.reschedule", qos: .utility)
+    private static let rescheduleLock = NSLock()
+    private static var pendingReschedule: DispatchWorkItem?
 
     /// - Parameter catchUp: true 表示刚从后台回到前台 / 数据被改动，
     ///   此时对已经逾期的任务立刻补一次提醒（5 秒后）；
     ///   false 表示后台周期性重排，只沿用原有的时间网格，避免重复轰炸。
     static func rescheduleAll(tasks: [TaskItem], settings: AppSettings, catchUp: Bool) {
+        // 值类型快照，交给后台队列时不会有数据竞争
+        let snapshot = tasks
+        let s = settings
+        let item = DispatchWorkItem {
+            performReschedule(tasks: snapshot, settings: s, catchUp: catchUp)
+        }
+        rescheduleLock.lock()
+        pendingReschedule?.cancel()
+        pendingReschedule = item
+        rescheduleLock.unlock()
+        rescheduleQueue.asyncAfter(deadline: .now() + 0.4, execute: item)
+    }
+
+    private static func performReschedule(tasks: [TaskItem], settings: AppSettings, catchUp: Bool) {
         let c = center()
         c.getPendingNotificationRequests { pending in
             let old = pending.map { $0.identifier }.filter { $0.hasPrefix(idPrefix) }
@@ -59,7 +84,9 @@ enum NotificationScheduler {
             let active = tasks.filter { !$0.isDone }.sorted { $0.effectiveDue < $1.effectiveDue }
             guard !active.isEmpty else { return }
 
-            let per = max(6, min(totalSlots, totalSlots / max(1, active.count)))
+            // 每个任务分到的槽位数。上限压在 12：任务少时原来会给单个任务排满
+            // 60 条，等于把系统的配额一次吃光，别的任务反而排不上。
+            let per = max(6, min(12, totalSlots / max(1, active.count)))
             for t in active {
                 schedule(t, settings: settings, limit: per, catchUp: catchUp)
             }

@@ -56,11 +56,30 @@ enum AttachmentStore {
         names.compactMap { load($0) }
     }
 
+    // MARK: base64（同步 / 备份打包专用）
+
+    /// 照片的 base64 字符串，供备份与 NAS 同步塞进 JSON。
+    ///
+    /// 原来每打包一次就重新读盘 + base64 编码一遍全部照片。几十张照片
+    /// 就是几十 MB 的读盘 + 编码，而且这是**固定成本**（跟任务多少无关），
+    /// 同步一跑整机发烫、连界面都跟着卡。照片落盘后内容就不会变了，
+    /// 按文件名缓存即可；删除 / 清理时同步清掉。
+    private static let b64Cache = NSCache<NSString, NSString>()
+
+    static func base64(_ name: String) -> String? {
+        if let hit = b64Cache.object(forKey: name as NSString) { return hit }
+        guard let data = try? Data(contentsOf: url(name)) else { return nil }
+        let s = data.base64EncodedString() as NSString
+        b64Cache.setObject(s, forKey: name as NSString)
+        return s as String
+    }
+
     // MARK: 删除
 
     static func delete(_ names: [String]) {
         for n in names {
             cache.removeObject(forKey: n as NSString)
+            b64Cache.removeObject(forKey: n as NSString)
             try? FileManager.default.removeItem(at: url(n))
         }
     }
@@ -72,6 +91,7 @@ enum AttachmentStore {
         var n = 0
         for f in files where !used.contains(f) && !f.hasPrefix(".") {
             cache.removeObject(forKey: f as NSString)
+            b64Cache.removeObject(forKey: f as NSString)
             try? FileManager.default.removeItem(at: url(f))
             n += 1
         }

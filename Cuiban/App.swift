@@ -3,20 +3,14 @@ import UIKit
 
 // MARK: - 文案工具
 
+/// 时间标签文案。走 fmt 的格式化器缓存 —— 这个函数在列表行和每秒刷新的
+/// 倒计时标签里都会被调用，原来每次都 new 一个 DateFormatter，很浪费。
 func timeLabel(_ d: Date) -> String {
     let cal = Calendar.current
-    let f = DateFormatter()
-    f.locale = Locale(identifier: "zh_CN")
-    if cal.isDateInToday(d) {
-        f.dateFormat = "今天 HH:mm"
-    } else if cal.isDateInTomorrow(d) {
-        f.dateFormat = "明天 HH:mm"
-    } else if cal.isDateInYesterday(d) {
-        f.dateFormat = "昨天 HH:mm"
-    } else {
-        f.dateFormat = "M月d日 HH:mm"
-    }
-    return f.string(from: d)
+    if cal.isDateInToday(d) { return fmt(d, "今天 HH:mm") }
+    if cal.isDateInTomorrow(d) { return fmt(d, "明天 HH:mm") }
+    if cal.isDateInYesterday(d) { return fmt(d, "昨天 HH:mm") }
+    return fmt(d, "M月d日 HH:mm")
 }
 
 func human(_ seconds: TimeInterval) -> String {

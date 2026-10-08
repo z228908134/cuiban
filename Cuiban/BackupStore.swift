@@ -124,8 +124,9 @@ enum BackupStore {
                 .union(CardStore.shared.cards.flatMap { $0.photos })
                 .union(NoteStore.shared.notes.flatMap { $0.photos })
             for n in names {
-                if let data = try? Data(contentsOf: AttachmentStore.url(n)) {
-                    photos[n] = data.base64EncodedString()
+                // 走带缓存的编码：照片不变就不重新读盘 + base64
+                if let b64 = AttachmentStore.base64(n) {
+                    photos[n] = b64
                 }
             }
             payload.photos = photos

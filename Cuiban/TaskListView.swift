@@ -5,30 +5,34 @@ struct TaskListView: View {
     @State private var showingAdd = false
     @State private var editing: TaskItem? = nil
     @State private var detail: TaskItem? = nil
-    @State private var now = Date()
     @State private var showFinished = false
 
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
-
     var body: some View {
-        NavigationView {
+        // 三份列表各算一次就好。原来 body 里 `store.overdue` / `upcoming` /
+        // `finished` 被反复引用（overdue 3 次、finished 3 次），每引用一次
+        // 就要 filter 一遍。收成局部常量后每次重绘只算一次。
+        let overdue = store.overdue
+        let upcoming = store.upcoming
+        let finished = store.finished
+
+        return NavigationView {
             List {
-                if !store.overdue.isEmpty {
+                if !overdue.isEmpty {
                     Section {
-                        ForEach(store.overdue) { t in
+                        ForEach(overdue) { t in
                             row(t)
                         }
                     } header: {
-                        Label("逾期未完成 · \(store.overdue.count)", systemImage: "exclamationmark.triangle.fill")
+                        Label("逾期未完成 · \(overdue.count)", systemImage: "exclamationmark.triangle.fill")
                             .foregroundColor(.red)
                     }
                 }
 
                 Section {
-                    if store.upcoming.isEmpty && store.overdue.isEmpty {
+                    if upcoming.isEmpty && overdue.isEmpty {
                         emptyHint
                     } else {
-                        ForEach(store.upcoming) { t in
+                        ForEach(upcoming) { t in
                             row(t)
                         }
                     }
@@ -36,15 +40,15 @@ struct TaskListView: View {
                     Text("待办")
                 }
 
-                if !store.finished.isEmpty {
+                if !finished.isEmpty {
                     Section {
-                        ForEach(showFinished ? store.finished : Array(store.finished.prefix(2))) { t in
+                        ForEach(showFinished ? finished : Array(finished.prefix(2))) { t in
                             row(t)
                         }
                         Button {
                             showFinished.toggle()
                         } label: {
-                            Text(showFinished ? "收起已完成" : "展开已完成 (\(store.finished.count))")
+                            Text(showFinished ? "收起已完成" : "展开已完成 (\(finished.count))")
                                 .font(.app(13))
                         }
                     } header: {
@@ -72,7 +76,6 @@ struct TaskListView: View {
             }
         }
         .navigationViewStyle(.stack)
-        .onReceive(timer) { now = $0 }
     }
 
     private var emptyHint: some View {
@@ -172,9 +175,10 @@ struct TaskListView: View {
             .frame(width: 30, height: 30)
     }
 
-    /// 时间高亮标签：清单列表 / 详情页 / 日历共用 DueBadge，这里只包一层保持调用点简洁
+    /// 时间高亮标签：清单列表 / 详情页 / 日历共用 DueBadge，这里只包一层保持调用点简洁。
+    /// 不传 now：标签自己走表，清单页不再为它每秒重建整棵列表。
     private func dueBadge(_ t: TaskItem) -> some View {
-        DueBadge(task: t, now: now, size: 11)
+        DueBadge(task: t, size: 11)
     }
 
     // 时间文案统一走 DueBadge，不再保留纯文字版本
@@ -259,7 +263,7 @@ struct TaskDetailView: View {
                     .strikethrough(current.isDone)
                     .foregroundColor(current.isDone ? .secondary : .primary)
                 // 和清单列表用同一套高亮标签，详情页不再退回纯文字
-                DueBadge(task: current, now: Date(), size: 13)
+                DueBadge(task: current, size: 13)
             }
             Spacer(minLength: 0)
         }

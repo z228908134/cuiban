@@ -361,8 +361,9 @@ static func setHistoryKeep(_ v: Int) {
                 .union(NoteStore.shared.notes.flatMap { $0.photos })
                 .union(CardStore.shared.cards.flatMap { $0.photos })
             for n in names {
-                if let data = try? Data(contentsOf: AttachmentStore.url(n)) {
-                    photos[n] = data.base64EncodedString()
+                // 走带缓存的编码：照片不变就不重新读盘 + base64
+                if let b64 = AttachmentStore.base64(n) {
+                    photos[n] = b64
                 }
             }
             p.photos = photos
@@ -535,11 +536,18 @@ private static func push() -> SyncResult {
     /// 节流只限制频率，不解决线程问题。
     private static var lastAutoAt: Date = .distantPast
     private static let autoThrottle: TimeInterval = 30
+    /// 进程启动时刻，用来给「自动同步」留一段冷静期（详见 autoSyncIfNeeded）
+    private static let launchedAt = Date()
     /// 正在跑的同步，用来防止并发（后台化之后可能重入）
     private static let syncLock = NSLock()
     private static var syncRunning = false
 
     static func autoSyncIfNeeded() {
+        // 进程启动后的头几秒不自动同步。进 App 那一下本来就最忙
+        // （读数据、建首帧、排通知），而一次同步要打包全部照片
+        // （几十 MB 的读盘 + base64 + JSON 编码），撞在一起就是
+        // 「白屏好几秒、进去还卡」。首屏那次同步交给 syncOnLaunch。
+        guard Date().timeIntervalSince(launchedAt) > 5 else { return }
         // UserDefaults + 读三个文件的 stat：这一步很轻，主线程可以做
         let c = config
         guard c.isOn, c.autoSync else { return }
@@ -554,12 +562,15 @@ private static func push() -> SyncResult {
         }
     }
 
-    /// 进 App 时的首次同步：延后到界面出来之后再跑
+    /// 进 App 时的首次同步：等界面彻底稳住再跑
     static func syncOnLaunch() {
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.8) {
- guard beginSync() else { return }
-        defer { endSync() }
-  _ = syncNow()
+        // 原来是 0.8 秒 —— 正好和首帧渲染、列表构建、通知排程撞在一起。
+        // 而且它一跑就要打包全部照片（固定几十 MB 的成本），
+        // 所以往后放到 3 秒，让用户先看到能操作的界面。
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 3.0) {
+            guard beginSync() else { return }
+            defer { endSync() }
+            _ = syncNow()
         }
     }
 

@@ -91,7 +91,31 @@ enum NoteSummary {
     }
 
     /// 笔记正文 → 有意义的行（已剥掉勾选框标记、滤掉纯 URL / 纯日期 / 空行）
+    ///
+    /// 带缓存：笔记列表每一行都要算 displayTitle + snippet 两次，
+    /// 各自都会走一遍全文正则（挑「有意义的行」）。正文长、笔记多的时候
+    /// 这是列表最贵的一步。正文不变结果就不变，按正文缓存即可。
     static func meaningfulLines(_ body: String) -> [String] {
+        let key = body as NSString
+        if let hit = cache.object(forKey: key) { return hit.lines }
+        let out = computeMeaningfulLines(body)
+        cache.setObject(LinesBox(out), forKey: key)
+        return out
+    }
+
+    /// NSCache 的 value 必须是 AnyObject，包一层避免 NSArray 桥接的类型不确定性
+    private final class LinesBox {
+        let lines: [String]
+        init(_ l: [String]) { lines = l }
+    }
+
+    private static let cache: NSCache<NSString, LinesBox> = {
+        let c = NSCache<NSString, LinesBox>()
+        c.countLimit = 300
+        return c
+    }()
+
+    private static func computeMeaningfulLines(_ body: String) -> [String] {
         TextEditBridge.displayFriendly(body)
             .components(separatedBy: .newlines)
             .map { stripMark($0) }
@@ -116,16 +140,23 @@ final class NoteStore: ObservableObject {
     }
 
     private func load() {
-        if let data = try? Data(contentsOf: file),
-           let list = try? JSONDecoder().decode([NoteItem].self, from: data) {
-            // 旧版本勾选框写法（私有区字符 / ⬜️/✅/- [ ]）迁移成新标记并落盘
-            notes = list.map { n in
-                var m = n
-                m.body = TextEditBridge.migrate(m.body)
-                return m
+        guard let data = try? Data(contentsOf: file),
+              let list = try? JSONDecoder().decode([NoteItem].self, from: data) else { return }
+        // 旧版本勾选框写法（私有区字符 / ⬜️/✅/- [ ]）迁移成新标记并落盘
+        var changed = false
+        notes = list.map { n in
+            var m = n
+            let migrated = TextEditBridge.migrate(m.body)
+            if migrated != m.body {
+                m.body = migrated
+                changed = true
             }
-            save()
+            return m
         }
+        // **只有真的迁移过才落盘**。原来是无条件 save()：
+        // 每次冷启动都要把全部笔记重新编码写一遍，还会立刻触发一次
+        // 数据变化通知 → 云同步，白白拖慢进 App 的头几秒。
+        if changed { save() }
     }
 
     private func save() {

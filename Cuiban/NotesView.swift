@@ -34,22 +34,25 @@ struct NotesView: View {
     @State private var editing: NoteItem? = nil
 
     var body: some View {
-        NavigationView {
+        // 排序只算一次。原来 ForEach 里直接写 noteStore.sorted，
+        // 列表每次重绘都要重排一遍，笔记多了就是白耗。
+        let items = noteStore.sorted
+        return NavigationView {
             Group {
                 if noteStore.notes.isEmpty {
                     emptyHint
                 } else {
                     List {
-                        ForEach(noteStore.sorted) { n in
+                        ForEach(items) { n in
                             row(n)
                         }
                         .onDelete { idx in
-                            let ids = idx.map { noteStore.sorted[$0].id }
-                            noteStore.delete(ids: ids)
+                            noteStore.delete(ids: idx.map { items[$0].id })
                         }
                     }
                     .listStyle(.insetGrouped)
-                }            }
+                }
+            }
             .navigationTitle("笔记")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottomTrailing) {

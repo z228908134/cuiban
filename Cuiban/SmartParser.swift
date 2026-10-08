@@ -544,11 +544,30 @@ func repeatLabel(_ m: RepeatMode, weekdays: [Int]) -> String {
     }
 }
 
+/// 复用的 DateFormatter 池。
+///
+/// 每次 `DateFormatter()` 都要重新解析 locale / 格式串，是毫秒级开销。
+/// 而 `fmt` 会被列表行、日历、时间标签在高频路径上反复调用
+/// （列表每行一次、倒计时标签每秒一次），累计起来很可观。
+/// DateFormatter 不是线程安全的，所以拿到之后在锁内完成格式化。
+private enum FmtPool {
+    private static var map: [String: DateFormatter] = [:]
+    private static let lock = NSLock()
+
+    static func string(_ d: Date, _ pattern: String) -> String {
+        lock.lock()
+        defer { lock.unlock() }
+        if let f = map[pattern] { return f.string(from: d) }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = pattern
+        map[pattern] = f
+        return f.string(from: d)
+    }
+}
+
 func fmt(_ d: Date, _ pattern: String) -> String {
-    let f = DateFormatter()
-    f.locale = Locale(identifier: "zh_CN")
-    f.dateFormat = pattern
-    return f.string(from: d)
+    FmtPool.string(d, pattern)
 }
 
 func relativeLabel(_ d: Date, now: Date) -> String {
