@@ -65,9 +65,11 @@ enum NoteColors {
         }
     }
 
-    /// SwiftUI 侧用的色块
-    static func swatch(_ name: String, highlight: Bool) -> Color {
-        if highlight { return Color(highlight(name)) }
+    /// SwiftUI 侧用的色块。
+    /// 参数名不能叫 highlight —— 会和上面的静态方法 highlight(_:) 撞名，
+    /// 方法就会解析成这个 Bool 参数，编译直接报「cannot call value of non-function type 'Bool'」。
+    static func swatch(_ name: String, background: Bool) -> Color {
+        if background { return Color(NoteColors.highlight(name)) }
         return Color(text(name) ?? .label)
     }
 
@@ -529,7 +531,7 @@ struct NoteEditorView: View {
                     .frame(width: 30, height: 30)
                 if let name = name {
                     Circle()
-                        .fill(NoteColors.swatch(name, highlight: highlight))
+                        .fill(NoteColors.swatch(name, background: highlight))
                         .frame(width: 21, height: 21)
                 } else {
                     // 「默认 / 无」：灰底 + 一道斜杠，表示「不上色」
