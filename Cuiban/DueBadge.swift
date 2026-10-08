@@ -71,6 +71,13 @@ struct DueBadge: View {
             let s = task.doneAt.map { "已完成 · " + timeLabel($0) } ?? "已完成"
             return (s, "", Color.secondary, Color.primary.opacity(0.06))
         }
+        // 已抢到：这次机会已经拿到了，不该再报「已逾期」。
+        // 用青色（沉稳、不刺眼），和逾期的红、待办的蓝都区分得开。
+        if task.isHit {
+            return ("已抢到", "每天提醒",
+                    Color(red: 0.05, green: 0.43, blue: 0.34),
+                    Color(red: 0.86, green: 0.95, blue: 0.92))
+        }
         let due = task.effectiveDue
         let diff = due.timeIntervalSince(now)
         // 逾期：红底

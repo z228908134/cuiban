@@ -83,7 +83,11 @@ enum NotificationScheduler {
                 c.removePendingNotificationRequests(withIdentifiers: old)
             }
 
-            let active = tasks.filter { !$0.isDone }
+            // 已经过了下次机会时刻的「已抢到」任务不再排每日提醒：
+            // 它该被收起、并生成下一条待抢任务了（正常由 AlarmLoop / 切前台自动收起，
+            // 这里兜底的是「App 长期没打开」的情况，避免活动结束后还在每天提醒）
+            let now = Date()
+            let active = tasks.filter { !$0.isDone && !($0.isHit && $0.hitDeadline <= now) }
             guard !active.isEmpty else { return }
 
             // 槽位按紧迫程度竞标分配（见 allocate 注释），不再按任务数平均切
@@ -144,8 +148,30 @@ enum NotificationScheduler {
         return active.map { ($0, slots[$0.id] ?? 0) }
     }
 
+    /// 每日提醒的触发时刻：对齐到「任务原本的时分」的下一次出现。
+    ///
+    /// 例：抢购时间是每月 1 号 10:00，抢到之后就是每天 10:00 提醒一次。
+    /// 今天的 10:00 已经过了就顺延到明天 10:00，绝不回退到过去。
+    private static func nextDailySlot(for task: TaskItem, after floor: Date) -> Date {
+        let cal = Calendar.current
+        let hm = cal.dateComponents([.hour, .minute], from: task.dueDate)
+        var comps = cal.dateComponents([.year, .month, .day], from: floor)
+        comps.hour = hm.hour ?? 9
+        comps.minute = hm.minute ?? 0
+        comps.second = 0
+        guard var d = cal.date(from: comps) else { return floor }
+        if d <= floor {
+            d = cal.date(byAdding: .day, value: 1, to: d) ?? d.addingTimeInterval(86400)
+        }
+        return d
+    }
+
     /// 紧迫度权重，越近越大
     private static func urgency(_ t: TaskItem, now: Date) -> Int {
+        // 已抢到：已经拿下了，只是每天跟一下，给最低档
+        // （effectiveDue 在过去，不特判会按「已逾期」拿到最高权重，
+        //   把真正紧急的任务的配额吃掉）
+        if t.isHit { return 2 }
         let dt = t.effectiveDue.timeIntervalSince(now)
         if dt <= 0 { return 6 }                  // 已逾期
         if dt <= 3600 { return 5 }               // 1 小时内
@@ -157,14 +183,20 @@ enum NotificationScheduler {
 
     static func schedule(_ task: TaskItem, settings: AppSettings, limit: Int, catchUp: Bool) {
         let c = center()
-        let minutes = task.resolvedInterval(settings.defaultIntervalMinutes)
+        let minutes = task.nagIntervalMinutes(settings.defaultIntervalMinutes)
         let step = Double(minutes) * 60.0
 
         // 时间网格以「到期时间」为锚点，保证反复重排也不会跑偏
         var fire = task.effectiveDue
         var index = 0
 
-        if catchUp {
+        if task.isHit {
+            // 已抢到：每天在「任务原本的时分」提醒一次。
+            // 不能沿用到期时间那套网格 —— 抢购时刻早就过去了，从那儿
+            // 按天滚出来的时刻是「抢购时刻 + N 天」，虽然也是每天一次，
+            // 但和用户选的时刻不是一回事（跨月、跨时区还会漂）。
+            fire = nextDailySlot(for: task, after: Date().addingTimeInterval(60))
+        } else if catchUp {
             let floor = Date().addingTimeInterval(5)
             if fire < floor {
                 fire = floor
@@ -180,11 +212,16 @@ enum NotificationScheduler {
 
         for i in 0..<limit {
             let content = UNMutableNotificationContent()
-            content.title = "⏰ " + task.title
-            if index + i == 0 {
-                content.body = "到点了，该做了。"
+            if task.isHit {
+                content.title = "📌 " + task.title
+                content.body = index + i == 0
+                    ? "这次机会已经抢到了，每天跟一下进度。"
+                    : "已经抢到第 \(index + i + 1) 天了，别忘了继续跟进。"
             } else {
-                content.body = "已经催你 \(index + i + 1) 次了，还没完成。"
+                content.title = "⏰ " + task.title
+                content.body = index + i == 0
+                    ? "到点了，该做了。"
+                    : "已经催你 \(index + i + 1) 次了，还没完成。"
             }
             content.categoryIdentifier = categoryId
             content.threadIdentifier = task.id

@@ -13,6 +13,7 @@ struct TaskListView: View {
         // 就要 filter 一遍。收成局部常量后每次重绘只算一次。
         let overdue = store.overdue
         let upcoming = store.upcoming
+        let hit = store.hit
         let finished = store.finished
 
         return NavigationView {
@@ -29,7 +30,7 @@ struct TaskListView: View {
                 }
 
                 Section {
-                    if upcoming.isEmpty && overdue.isEmpty {
+                    if upcoming.isEmpty && overdue.isEmpty && hit.isEmpty {
                         emptyHint
                     } else {
                         ForEach(upcoming) { t in
@@ -38,6 +39,19 @@ struct TaskListView: View {
                     }
                 } header: {
                     Text("待办")
+                }
+
+                // 已抢到：机会已经拿下，但活动还在继续，改成每天提醒。
+                // 单独一组，既不混进「逾期」（会造成焦虑），也不会掉出列表。
+                if !hit.isEmpty {
+                    Section {
+                        ForEach(hit) { t in
+                            row(t)
+                        }
+                    } header: {
+                        Label("已抢到 · 每天提醒 · \(hit.count)", systemImage: "checkmark.seal.fill")
+                            .foregroundColor(Color(red: 0.05, green: 0.43, blue: 0.34))
+                    }
                 }
 
                 if !finished.isEmpty {
@@ -101,9 +115,9 @@ struct TaskListView: View {
             Button {
                 if t.isDone { store.uncomplete(id: t.id) } else { store.complete(id: t.id) }
             } label: {
-                Image(systemName: t.isDone ? "checkmark.circle.fill" : "circle")
+                Image(systemName: rowIcon(t))
                     .font(.app(22))
-                    .foregroundColor(t.isDone ? .green : (t.isOverdue ? .red : .secondary))
+                    .foregroundColor(rowIconColor(t))
             }
             .buttonStyle(.plain)
 
@@ -119,10 +133,10 @@ struct TaskListView: View {
 
             if !t.isDone {
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text("每 \(t.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟")
+                    Text(t.nagIntervalText(store.settings.defaultIntervalMinutes))
                         .font(.app(11))
-                        .foregroundColor(.secondary)
-                    if t.nagCount > 0 {
+                        .foregroundColor(t.isHit ? Color(red: 0.05, green: 0.43, blue: 0.34) : .secondary)
+                    if t.nagCount > 0 && !t.isHit {
                         Text("催 \(t.nagCount) 次")
                             .font(.app(11, weight: .bold))
                             .padding(.horizontal, 7)
@@ -157,6 +171,23 @@ struct TaskListView: View {
             }
             .tint(Color(red: 0.98, green: 0.58, blue: 0.00))
 
+            // 已抢到 / 撤销已抢到。抢购类任务用：抢中之后任务不消失，
+            // 催促降频成每天一次（沿用任务原本的时分），到下月机会时刻自动收起。
+            if !t.isDone {
+                Button {
+                    if t.isHit {
+                        store.undoHit(id: t.id)
+                    } else {
+                        store.markHit(id: t.id)
+                    }
+                } label: {
+                    swipeIcon(t.isHit ? "arrow.uturn.backward" : "checkmark.seal.fill")
+                }
+                .tint(t.isHit
+                      ? Color(red: 0.42, green: 0.44, blue: 0.47)
+                      : Color(red: 0.05, green: 0.53, blue: 0.42))
+            }
+
             Button {
                 editing = t
             } label: {
@@ -173,6 +204,26 @@ struct TaskListView: View {
             .font(.app(19, weight: .semibold))
             .foregroundColor(.white)
             .frame(width: 30, height: 30)
+    }
+
+    /// 已抢到的青色：既不刺眼又能一眼看出「这条已经拿下了」
+    static let hitTint = Color(red: 0.05, green: 0.43, blue: 0.34)
+
+    /// 行首状态图标：完成 / 已抢到 / 未完成
+    private func rowIcon(_ t: TaskItem) -> String {
+        if t.isDone { return "checkmark.circle.fill" }
+        if t.isHit { return "checkmark.seal.fill" }
+        return "circle"
+    }
+
+    /// 行首图标颜色：已完成绿 / 已抢到青 / 逾期红 / 其余次要色。
+    /// 写成函数而不是嵌套三元——嵌套三元 + 简写颜色（.red 这类）
+    /// 会让类型推断变脆，编译容易报 ambiguous。
+    private func rowIconColor(_ t: TaskItem) -> Color {
+        if t.isDone { return .green }
+        if t.isHit { return TaskListView.hitTint }
+        if t.isOverdue { return .red }
+        return .secondary
     }
 
     /// 时间高亮标签：清单列表 / 详情页 / 日历共用 DueBadge，这里只包一层保持调用点简洁。
@@ -201,12 +252,27 @@ struct TaskDetailView: View {
 
     private var current: TaskItem { store.task(id: task.id) ?? task }
 
+    private var statusIcon: String {
+        if current.isDone { return "checkmark.circle.fill" }
+        if current.isHit { return "checkmark.seal.fill" }
+        if current.isOverdue { return "exclamationmark.circle.fill" }
+        return "circle"
+    }
+
+    private var statusColor: Color {
+        if current.isDone { return .green }
+        if current.isHit { return TaskListView.hitTint }
+        if current.isOverdue { return .red }
+        return .secondary
+    }
+
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     titleBlock
                     infoBlock
+                    hitBlock
                     if !current.note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         noteBlock
                     }
@@ -248,13 +314,9 @@ struct TaskDetailView: View {
 
     private var titleBlock: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: current.isDone
-                  ? "checkmark.circle.fill"
-                  : (current.isOverdue ? "exclamationmark.circle.fill" : "circle"))
+            Image(systemName: statusIcon)
                 .font(.app(24))
-                .foregroundColor(current.isDone
-                                 ? .green
-                                 : (current.isOverdue ? .red : .secondary))
+                .foregroundColor(statusColor)
                 .padding(.top, 2)
 
             VStack(alignment: .leading, spacing: 6) {
@@ -283,13 +345,64 @@ struct TaskDetailView: View {
             infoRow(icon: "timer", label: "催促间隔",
                     value: current.isDone
                         ? "—"
-                        : "每 \(current.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟")
+                        : current.nagIntervalText(store.settings.defaultIntervalMinutes))
+            if current.isHit {
+                Divider().padding(.leading, 38)
+                infoRow(icon: "hand.raised", label: "抢到时间",
+                        value: current.hitAt.map { timeLabel($0) } ?? "—")
+                Divider().padding(.leading, 38)
+                infoRow(icon: "calendar.badge.clock", label: "每天提醒至",
+                        value: timeLabel(current.hitDeadline))
+            }
             if current.nagCount > 0 {
                 Divider().padding(.leading, 38)
                 infoRow(icon: "megaphone", label: "已催促", value: "\(current.nagCount) 次")
             }
         }
         .background(RoundedRectangle(cornerRadius: 14).fill(Color(UIColor.secondarySystemGroupedBackground)))
+    }
+
+    // MARK: 已抢到（每月一次机会的抢购 / 报名类任务）
+
+    @ViewBuilder
+    private var hitBlock: some View {
+        if !current.isDone {
+            VStack(alignment: .leading, spacing: 10) {
+                Text(current.isHit ? "已抢到，改成每天提醒了" : "抢到了就点一下，别再高频催")
+                    .font(.app(15, weight: .semibold))
+                Text(current.isHit
+                     ? "任务会留在清单的「已抢到」里，每天 \(fmt(current.dueDate, "HH:mm")) 提醒一次；"
+                        + "到 \(timeLabel(current.hitDeadline)) 自动收起，那时会重新开始催抢。"
+                     : "适合「活动持续一月、但一月只有一次机会」的任务。点了之后任务不消失，"
+                        + "提醒从每 \(current.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟降为每天一次"
+                        + "（沿用任务本身的时分），到下次机会时刻自动收起。")
+                    .font(.app(12))
+                    .foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Button {
+                    if current.isHit {
+                        store.undoHit(id: current.id)
+                    } else {
+                        store.markHit(id: current.id)
+                    }
+                } label: {
+                    Text(current.isHit ? "撤销已抢到" : "已抢到")
+                        .font(.app(15, weight: .semibold))
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(current.isHit
+                                    ? Color(UIColor.tertiarySystemFill)
+                                    : Color(red: 0.05, green: 0.53, blue: 0.42))
+                        .foregroundColor(current.isHit ? .primary : .white)
+                        .clipShape(RoundedRectangle(cornerRadius: 10))
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(14)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14).fill(Color(UIColor.secondarySystemGroupedBackground)))
+        }
     }
 
     private func infoRow(icon: String, label: String, value: String) -> some View {

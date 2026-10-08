@@ -76,6 +76,9 @@ struct RootView: View {
         }
         .onAppear {
    AlarmLoop.shared.start()
+        // 已抢到的任务如果已经跨过下次机会时刻（App 之前一直没开着），
+        // 先收起它们、把下一条待抢任务排出来，再重排通知
+        store.rollOverHitTasks()
         store.refreshAuth()
             NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
   // 进 App 先同步一次 NAS 上的新数据。
@@ -115,6 +118,9 @@ struct CuibanApp: App {
         .onChange(of: scenePhase) { phase in
             switch phase {
             case .active:
+                // 回到前台先把「已抢到」里跨过下次机会时刻的收起来，
+                // 否则它们会带着过期的每日提醒继续留在清单里
+                store.rollOverHitTasks()
                 store.refreshAuth()
                 NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
             case .background:

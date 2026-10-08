@@ -27,7 +27,7 @@ struct AlarmOverlay: View {
 
                 bellIcon
 
-                Text("该做了！")
+                Text(task.isHit ? "已经抢到了" : "该做了！")
                     .font(.app(17, weight: .medium))
                     .foregroundColor(.white.opacity(0.85))
                     .padding(.top, 14)
@@ -39,10 +39,17 @@ struct AlarmOverlay: View {
                     .padding(.top, 10)
                     .padding(.horizontal, 8)
 
-                Text("已逾期 \(human(overdueSeconds)) · 第 \(max(1, task.nagCount)) 次催你")
-                    .font(.app(14))
-                    .foregroundColor(.white.opacity(0.9))
-                    .padding(.top, 12)
+                if task.isHit {
+                    Text("已抢到 · 第 \(max(1, task.nagCount)) 天提醒（每天一次）")
+                        .font(.app(14))
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(.top, 12)
+                } else {
+                    Text("已逾期 \(human(overdueSeconds)) · 第 \(max(1, task.nagCount)) 次催你")
+                        .font(.app(14))
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(.top, 12)
+                }
 
                 if !task.photos.isEmpty {
                     PhotoStrip(names: task.photos, size: 76, maxCount: 3, radius: 12)
@@ -64,7 +71,7 @@ struct AlarmOverlay: View {
                 Button {
                     store.complete(id: task.id)
                 } label: {
-                    Text("完成了")
+                    Text(task.isHit ? "收尾（下月再抢）" : "完成了")
                         .font(.app(20, weight: .bold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 18)
@@ -74,18 +81,38 @@ struct AlarmOverlay: View {
                 }
                 .buttonStyle(.plain)
 
-                HStack(spacing: 10) {
-                    snoozeBtn(5, "延后 5 分")
-                    snoozeBtn(10, "延后 10 分")
-                    snoozeBtn(30, "延后 30 分")
+                if task.isHit {
+                    // 已抢到的任务只有「今天先不提醒」这一个有意义的选择，
+                    // 延后 5/10/30 分钟没意义（它的下一次提醒本来就是明天）
+                    Button {
+                        store.snooze(id: task.id, minutes: 1440)
+                    } label: {
+                        Text("明天再提醒")
+                            .font(.app(16, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.white.opacity(0.18))
+                            .foregroundColor(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 12)
+                } else {
+                    HStack(spacing: 10) {
+                        snoozeBtn(5, "延后 5 分")
+                        snoozeBtn(10, "延后 10 分")
+                        snoozeBtn(30, "延后 30 分")
+                    }
+                    .padding(.top, 12)
                 }
-                .padding(.top, 12)
 
                 Button {
                     store.markNagged(id: task.id)
                     alarm.dismiss(id: task.id)
                 } label: {
-                    Text("先关掉，\(task.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟后再催")
+                    Text(task.isHit
+                         ? "先关掉，明天同一时间再提醒"
+                         : "先关掉，\(task.resolvedInterval(store.settings.defaultIntervalMinutes)) 分钟后再催")
                         .font(.app(14))
                         .foregroundColor(.white.opacity(0.85))
                         .padding(.top, 16)

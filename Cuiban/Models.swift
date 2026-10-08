@@ -43,6 +43,10 @@ struct TaskItem: Identifiable, Codable, Equatable {
     var lastNagAt: Date? = nil
     /// 延后到这个时间之前不再打扰
     var snoozeUntil: Date? = nil
+    /// 「已抢到」的时间。非 nil 表示这次机会已经抓住：
+    /// 任务不消失（留在清单的「已抢到」分组里），但提醒节奏从
+    /// 「每 N 分钟」降为「每天一次」，直到下次机会时间（hitDeadline）自动收起。
+    var hitAt: Date? = nil
 
     /// 真正生效的到期时间（考虑延后）
     var effectiveDue: Date {
@@ -50,10 +54,35 @@ struct TaskItem: Identifiable, Codable, Equatable {
         return dueDate
     }
 
-    var isOverdue: Bool { !isDone && effectiveDue <= Date() }
+    /// 已抢到：本轮机会拿到了，改走每日提醒，不再算「逾期」
+    var isHit: Bool { hitAt != nil }
+
+    /// 已抢到的任务不该继续报「逾期」——它已经拿到了，只是还在跟进
+    var isOverdue: Bool { !isDone && !isHit && effectiveDue <= Date() }
+
+    /// 已抢到阶段的截止时间：下次机会到来的时刻。
+    ///
+    /// 重复任务按重复规则往后一步（每月抢购 → 下个月同一天同一时刻）；
+    /// 不重复的按「一个月」算（活动持续一月的场景），到点自动收尾。
+    var hitDeadline: Date {
+        if repeatMode != .none { return stepForward(from: dueDate) }
+        return Calendar.current.date(byAdding: .month, value: 1, to: dueDate)
+            ?? dueDate.addingTimeInterval(2592000)
+    }
 
     func resolvedInterval(_ fallback: Int) -> Int {
         intervalMinutes > 0 ? intervalMinutes : max(1, fallback)
+    }
+
+    /// 当前真正生效的催促间隔（分钟）。
+    /// 已抢到之后固定 1440（每天一次），其余情况按任务自己的间隔。
+    func nagIntervalMinutes(_ fallback: Int) -> Int {
+        isHit ? 1440 : resolvedInterval(fallback)
+    }
+
+    /// 催促节奏的说明文案，列表 / 详情 / 催促页共用
+    func nagIntervalText(_ fallback: Int) -> String {
+        isHit ? "每天提醒" : "每 \(resolvedInterval(fallback)) 分钟"
     }
 
     /// 按重复规则往后走一步
@@ -113,7 +142,7 @@ struct TaskItem: Identifiable, Codable, Equatable {
 extension TaskItem {
     enum CodingKeys: String, CodingKey {
         case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays, photos,
-             isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil
+             isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil, hitAt
     }
 
     init(from decoder: Decoder) throws {
@@ -133,6 +162,7 @@ extension TaskItem {
         nagCount = try c.decodeIfPresent(Int.self, forKey: .nagCount) ?? d.nagCount
         lastNagAt = try c.decodeIfPresent(Date.self, forKey: .lastNagAt)
         snoozeUntil = try c.decodeIfPresent(Date.self, forKey: .snoozeUntil)
+        hitAt = try c.decodeIfPresent(Date.self, forKey: .hitAt)
     }
 }
 
@@ -314,14 +344,17 @@ final class TaskStore: ObservableObject {
         return c
     }
 
-    var overdue: [TaskItem] { pending.filter { $0.effectiveDue <= Date() } }
-    var upcoming: [TaskItem] { pending.filter { $0.effectiveDue > Date() } }
+    /// 已抢到：单独一组展示。它们的 effectiveDue 已经过去（抢购时刻过了），
+    /// 但既不算逾期也不该掉出列表 —— 漏掉 upcoming 会让任务凭空消失。
+    var hit: [TaskItem] { pending.filter { $0.isHit } }
+    var overdue: [TaskItem] { pending.filter { !$0.isHit && $0.effectiveDue <= Date() } }
+    var upcoming: [TaskItem] { pending.filter { !$0.isHit && $0.effectiveDue > Date() } }
 
     /// 只要数量时用它：不用建中间数组
     var overdueCount: Int {
         var n = 0
         let now = Date()
-        for t in pending where t.effectiveDue <= now { n += 1 }
+        for t in pending where !t.isHit && t.effectiveDue <= now { n += 1 }
         return n
     }
 
@@ -380,6 +413,8 @@ final class TaskStore: ObservableObject {
             n.nagCount = 0
             n.lastNagAt = nil
             n.createdAt = Date()
+            // 下一条是新机会，必须从「未抢到」开始重新高频催抢
+            n.hitAt = nil
             tasks.append(n)
         }
 
@@ -394,6 +429,48 @@ final class TaskStore: ObservableObject {
         tasks[i].doneAt = nil
         save()
         NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
+    }
+
+    // MARK: 已抢到（抢购类任务用）
+    //
+    // 场景：每月一次机会的抢购 / 报名，活动本身持续一整月。
+    // 抢中之后任务不该消失（还得跟一个月），但也不该继续每 N 分钟催 ——
+    // 所以点「已抢到」把它切成「每天提醒一次」，到下月机会时刻自动收起，
+    // 重复规则会顺手把下个月的抢购任务排出来。
+
+    /// 标记已抢到：留在清单里，提醒降频成每天一次
+    func markHit(id: String?) {
+        guard let id = id, let i = index(of: id) else { return }
+        tasks[i].hitAt = Date()
+        tasks[i].snoozeUntil = nil
+        // 关键：把 lastNagAt 设成现在，否则 AlarmLoop 下一刻就会判定
+        // 「从没催过」→ 立刻弹一次催促页，刚点完又被打扰。
+        tasks[i].lastNagAt = Date()
+        save()
+        AlarmCenter.shared.dismiss(id: id)
+        NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
+    }
+
+    /// 撤销已抢到：回到高频催促
+    func undoHit(id: String?) {
+        guard let id = id, let i = index(of: id) else { return }
+        tasks[i].hitAt = nil
+        tasks[i].lastNagAt = nil
+        save()
+        NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
+    }
+
+    /// 已抢到的任务到了下次机会时刻：自动收起这一条。
+    ///
+    /// 走完 complete() 就会把下一条排出来（重复任务），新任务从「未抢到」
+    /// 起步继续高频催抢；不重复的任务则就此完成，不再每天提醒。
+    /// AlarmLoop 每秒会 call 一次，所以内部先做一次极便宜的判断再动手。
+    func rollOverHitTasks() {
+        guard tasks.contains(where: { $0.isHit && !$0.isDone }) else { return }
+        let now = Date()
+        for t in tasks where t.isHit && !t.isDone && t.hitDeadline <= now {
+            complete(id: t.id)
+        }
     }
 
     func snooze(id: String?, minutes: Int? = nil) {
@@ -577,6 +654,10 @@ final class AlarmLoop {
         // 0. 后台常驻时周期性重排通知，让催促可以无限延续
         rearmIfNeeded()
 
+        // 0.5 已抢到的任务到了下次机会时刻就自动收起（内部有廉价短路判断，
+        //     没有「已抢到」任务时只是一次 contains 扫描）
+        rollOverIfNeeded(store: store)
+
         // 1. 已有催促页时：到间隔就再记一次，界面上的计数会自己长
         if let activeId = AlarmCenter.shared.activeTaskId {
             guard let t = store.task(id: activeId) else {
@@ -587,25 +668,39 @@ final class AlarmLoop {
                 AlarmCenter.shared.dismiss(id: activeId)
                 return
             }
-            let step = Double(t.resolvedInterval(store.settings.defaultIntervalMinutes)) * 60.0
+            let step = Double(t.nagIntervalMinutes(store.settings.defaultIntervalMinutes)) * 60.0
             if let last = t.lastNagAt, now.timeIntervalSince(last) >= step {
                 store.markNagged(id: activeId)
             }
             return
         }
 
-        // 2. 找出该催的任务
+        // 2. 找出该催的任务：普通任务优先，已抢到的（每天一次）排在后面。
+        //    pending 是按到期时间排的，已抢到的到期时间在过去会顶到最前面，
+        //    直接取 first 会让「已抢到」的每日提醒抢在真正紧急的任务之前。
         let step = { (t: TaskItem) -> Double in
-            Double(t.resolvedInterval(store.settings.defaultIntervalMinutes)) * 60.0
+            Double(t.nagIntervalMinutes(store.settings.defaultIntervalMinutes)) * 60.0
         }
-        if let next = store.pending.first(where: { t -> Bool in
+        let isDue: (TaskItem) -> Bool = { t in
             guard t.effectiveDue <= now else { return false }
             guard let last = t.lastNagAt else { return true }
             return now.timeIntervalSince(last) >= step(t)
-        }) {
+        }
+        let all = store.pending
+        if let next = all.first(where: { !$0.isHit && isDue($0) })
+            ?? all.first(where: { $0.isHit && isDue($0) }) {
             store.markNagged(id: next.id)
             AlarmCenter.shared.show(taskId: next.id)
         }
+    }
+
+    private var lastRolloverAt = Date.distantPast
+
+    /// 「已抢到」任务的下月切换不用每秒算，30 秒检查一次足够精确
+    private func rollOverIfNeeded(store: TaskStore) {
+        guard Date().timeIntervalSince(lastRolloverAt) >= 30 else { return }
+        lastRolloverAt = Date()
+        store.rollOverHitTasks()
     }
 
     /// 后台常驻时周期性重排，让催促无限延续下去
