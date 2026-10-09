@@ -372,7 +372,7 @@ struct CouponsView: View {
             Divider().frame(height: 26)
             stat("面额合计", moneyText(store.activeFaceValue))
             Divider().frame(height: 26)
-            stat("已出利润", moneyText(store.profitTotal), tint: Color(red: 0.05, green: 0.43, blue: 0.34))
+            stat("已出利润", moneyText(store.profitTotal), tint: Color(red: 0.85, green: 0.20, blue: 0.16))
         }
         .listRowBackground(Color.clear)
     }
@@ -380,10 +380,10 @@ struct CouponsView: View {
     private func stat(_ label: String, _ value: String, tint: Color = .primary) -> some View {
         VStack(spacing: 3) {
             Text(value)
-                .font(.app(15, weight: .semibold))
+                .font(.app(18, weight: .semibold))
                 .foregroundColor(tint)
             Text(label)
-                .font(.app(11))
+                .font(.app(12))
                 .foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
@@ -536,11 +536,11 @@ struct CouponEditView: View {
                 }
 
                 Section(header: Text("时间")) {
-                    DatePicker("领的日期", selection: $draft.acquiredDate,
+                    DatePicker("领取时间", selection: $draft.acquiredDate,
                                displayedComponents: [.date, .hourAndMinute])
                     DatePicker("过期时间", selection: $draft.expiryDate,
                                displayedComponents: [.date, .hourAndMinute])
-                    Toggle("已经用掉", isOn: $hasUsed.animation())
+                    Toggle("已使用", isOn: $hasUsed.animation())
                     if hasUsed {
                         DatePicker("使用时间", selection: usedBinding,
                                    displayedComponents: [.date, .hourAndMinute])
