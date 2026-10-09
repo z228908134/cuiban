@@ -86,8 +86,14 @@ enum NotificationScheduler {
             // 已经过了下次机会时刻的「已抢到」任务不再排每日提醒：
             // 它该被收起、并生成下一条待抢任务了（正常由 AlarmLoop / 切前台自动收起，
             // 这里兜底的是「App 长期没打开」的情况，避免活动结束后还在每天提醒）
+            //
+            // ⚠️ 必须同时排除「已完成」的任务！shouldRollOver 对已完成任务返回
+            // false（guard !isDone else return false），只判它的话已完成的任务
+            // 会被当成活跃任务重新排进通知队列 —— 表现就是「点完完成还在推送，
+            // 每 2 分钟一条已经催你 N 次了」。前台有 vetted() 兜底看不出来，
+            // 锁屏 / 后台时 iOS 直接弹横幅，用户天天被轰炸。v1.16.0 起就坏着。
             let now = Date()
-            let active = tasks.filter { !$0.shouldRollOver(at: now) }
+            let active = tasks.filter { !$0.isDone && !$0.shouldRollOver(at: now) }
             let activeIds = Set(active.map { $0.id })
 
             // 已送达、还挂在通知中心里的也要对账：任务已经完成 / 删除的，
@@ -203,6 +209,9 @@ enum NotificationScheduler {
     }
 
     static func schedule(_ task: TaskItem, settings: AppSettings, limit: Int, catchUp: Bool) {
+        // 保险丝：已完成的任务绝不排通知。上游 performReschedule 已经过滤，
+        // 但这条防线太便宜了，值得留着 —— 任何调用方拿错快照都炸不出通知。
+        guard !task.isDone else { return }
         let c = center()
         let minutes = task.nagIntervalMinutes(settings.defaultIntervalMinutes)
         let step = Double(minutes) * 60.0
