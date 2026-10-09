@@ -632,11 +632,8 @@ struct NoteEditorView: View {
                            underline: Bool = false, strike: Bool = false,
                            on: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            Text(label)
-                .font(.app(16, weight: bold || on ? .semibold : .regular))
-                .italic(italic)
-                .underline(underline)
-                .strikethrough(strike)
+            pillText(label, bold: bold, italic: italic,
+                     underline: underline, strike: strike, on: on)
                 .foregroundColor(on ? .white : .primary)
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .background(
@@ -645,6 +642,19 @@ struct NoteEditorView: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    /// 胶囊上的文字。
+    /// 注意：斜体/下划线/删除线带 Bool 参数的版本只存在于 View（iOS 16+），
+    /// Text 上只有无参重载（iOS 13 起）——直接写 `.italic(flag)` 在 iOS 15 上编译不过，
+    /// 所以这里按需逐个调用无参版本。
+    private func pillText(_ label: String, bold: Bool, italic: Bool,
+                          underline: Bool, strike: Bool, on: Bool) -> Text {
+        var t = Text(label).font(.app(16, weight: bold || on ? .semibold : .regular))
+        if italic { t = t.italic() }
+        if underline { t = t.underline() }
+        if strike { t = t.strikethrough() }
+        return t
     }
 
     /// 右端 ∨：其余全部功能收进菜单（滴答同款折叠）
