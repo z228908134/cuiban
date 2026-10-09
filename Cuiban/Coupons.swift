@@ -302,9 +302,9 @@ enum CouponScheduler {
     private struct Slot {
         let suffix: String
         let fire: Date
-        let body: String
         /// 距过期的天数：0 = 过期当天，越大越早。排序/截断按它来。
         let rank: Int
+        let body: String
     }
 
     /// 生成这张券的提醒时刻：过期前第 lead…1 天 + 过期当天，每天 **两个时刻**
