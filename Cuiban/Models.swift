@@ -83,6 +83,12 @@ struct TaskItem: Identifiable, Codable, Equatable {
     ///   1 = 只有一次机会（抢到后任务不消失、转「每天提醒」）；
     ///  ≥2 = 配额型（「一月 4 次、每天都能抢」，抢到一次记一次，抢满本周期就毕业）。
     var quota: Int = 1
+    /// 配额型任务**本周期的起点**（周期 = cycleStart + 1 个月）。
+    ///
+    /// 为什么不能拿 dueDate 现算：配额型没抢满时点「完成」只是今天这轮结束，
+    /// dueDate 每天都要往前滚；要是周期跟着 dueDate 走，「本周期至」就会一天漂一天。
+    /// 存下起点，周期终点在整个周期内纹丝不动。nil = 老数据，退回用 dueDate 当起点。
+    var cycleStart: Date? = nil
 
     /// 真正生效的到期时间（考虑延后）
     var effectiveDue: Date {
@@ -136,6 +142,8 @@ struct TaskItem: Identifiable, Codable, Equatable {
     ///
     /// · 单次机会型 + 重复任务：按重复规则往后一步（「每月 1 号」→ 下月 1 号）。
     /// · 配额型：周期固定为一个月（「一月 N 次」），到月底作废、下月重来。
+    ///   周期起点用 cycleStart（存下来的），不用 dueDate —— 配额型没抢满时
+    ///   点「完成」dueDate 每天都滚，周期跟着走就会「一天漂一天」。
     /// · 不重复的：按「一个月」算（活动持续一月的场景），到点自动收尾。
     /// · 设了清单结束时间的：结果再长也长不过它 —— 结束时间就是活动终点。
     var hitDeadline: Date {
@@ -143,8 +151,9 @@ struct TaskItem: Identifiable, Codable, Equatable {
         if repeatMode.recurs && !isQuotaTask {
             raw = stepForward(from: dueDate)
         } else {
-            raw = Calendar.current.date(byAdding: .month, value: 1, to: dueDate)
-                ?? dueDate.addingTimeInterval(2592000)
+            let anchor = cycleStart ?? dueDate
+            raw = Calendar.current.date(byAdding: .month, value: 1, to: anchor)
+                ?? anchor.addingTimeInterval(2592000)
         }
         if let e = endDate, e < raw { return e }
         return raw
@@ -295,7 +304,7 @@ extension TaskItem {
     enum CodingKeys: String, CodingKey {
         case id, title, note, dueDate, intervalMinutes, repeatMode, weekdays, photos,
              isDone, doneAt, createdAt, nagCount, lastNagAt, snoozeUntil, hitAt,
-             dayInterval, monthDays, hitCount, quota, endDate, kind
+             dayInterval, monthDays, hitCount, quota, endDate, kind, cycleStart
     }
 
     init(from decoder: Decoder) throws {
@@ -330,6 +339,7 @@ extension TaskItem {
         // 它的点完成 / 抢到按钮行为不受 kind 影响，只是表单默认展示成周期型。
         kind = try c.decodeIfPresent(TaskKind.self, forKey: .kind)
             ?? (quota >= 2 ? .grabbing : .doing)
+        cycleStart = try c.decodeIfPresent(Date.self, forKey: .cycleStart)
     }
 }
 
@@ -589,13 +599,32 @@ final class TaskStore: ObservableObject {
 
         // 配额型任务和重复任务都要把下一轮排出来：
         //   重复任务 → 按重复规则算下一次机会；
-        //   配额型   → 周期固定一个月，下一轮就是「本周期起点 + 1 个月」。
+        //   配额型   → 分两种：抢满毕业才开新周期（= 本周期终点）；
+        //              没抢满点「完成」只是今天这轮结束，按重复规则滚到明天，
+        //              本周期的进度（已抢 X/N）和周期终点都不动。
+        //              （之前没抢满点完成也直接取 hitDeadline，表现就是
+        //              「明明是一个月的活动周期，点完完成直接跳到下个月」。）
         // 但清单已经结束的除外：结束时间就是整条清单的终点，不再开新的一轮。
         var next: Date? = nil
+        // true = 下一轮是新周期（抢到的进度清零）；false = 本周期内的下一轮（进度保留）
+        var freshCycle = true
         if old.hasEnded() {
             next = nil
         } else if old.isQuotaTask {
-            next = old.hitDeadline
+            if old.isQuotaFull {
+                // 抢满毕业：新周期从本周期终点开始
+                next = old.hitDeadline
+            } else if old.repeatMode.recurs {
+                if let d = nextOccurrence(of: old, floor: nextFloor ?? Date()) {
+                    next = d
+                    // 下一次机会已经越过本周期终点 → 那是新周期的第一次机会
+                    //（rollOverHitTasks 收起时 nextFloor = 周期终点 - 1 秒，
+                    //  算出来的 d 正好等于周期终点，同样落进这个分支）
+                    freshCycle = d >= old.hitDeadline
+                }
+            } else {
+                next = old.hitDeadline
+            }
         } else if old.repeatMode.recurs {
             next = nextOccurrence(of: old, floor: nextFloor ?? Date())
         }
@@ -619,9 +648,18 @@ final class TaskStore: ObservableObject {
                 n.nagCount = 0
                 n.lastNagAt = nil
                 n.createdAt = Date()
-                // 下一条是新周期，必须从「一次都没抢到」开始重新催抢
-                n.hitAt = nil
-                n.hitCount = 0
+                if n.isQuotaTask && !freshCycle {
+                    // 本周期内的下一轮：抢到的进度和周期起点原样带走，
+                    // 「已抢 X/N」和「本周期至」都不能变
+                    n.cycleStart = old.cycleStart ?? old.dueDate
+                    n.hitCount = old.hitCount
+                    n.hitAt = old.hitAt
+                } else {
+                    // 新周期（或普通任务的下一条）：必须从「一次都没抢到」开始重新催抢
+                    n.hitAt = nil
+                    n.hitCount = 0
+                    n.cycleStart = n.isQuotaTask ? next : nil
+                }
                 tasks.append(n)
             }
         }

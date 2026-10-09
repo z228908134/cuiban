@@ -482,6 +482,8 @@ struct TaskDetailView: View {
                 + "没抢满会一直按原节奏催（每 \(interval) 分钟）；"
                 + "抢满 \(current.quota) 次本周期就毕业，"
                 + "没抢满则到 \(timeLabel(current.hitDeadline)) 自动作废、下个周期重新开始。"
+                + "点上面的圆圈「完成」只算今天这轮做完，明天照常提醒，"
+                + "本周期进度不变；想记录抢到一次就点下面的按钮。"
         }
         if current.inHitGroup {
             return "任务会留在清单的「已抢到」里，每天 \(fmt(current.dueDate, "HH:mm")) 提醒一次；"

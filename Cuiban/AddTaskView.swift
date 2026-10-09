@@ -93,6 +93,7 @@ struct AddTaskView: View {
                             draft.quota = 1
                             draft.hitCount = 0
                             draft.hitAt = nil
+                            draft.cycleStart = nil
                         }
                     }
                     Text(draft.kind.desc)
@@ -781,6 +782,7 @@ struct AddTaskView: View {
             t.quota = 1
             t.hitCount = 0
             t.hitAt = nil
+            t.cycleStart = nil
         }
 
         // 照片：新选的落盘，老的沿用，被删掉的从磁盘清掉
