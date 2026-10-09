@@ -258,7 +258,7 @@ struct CardListView: View {
                 }
             }
             .listStyle(.plain)
-            .scrollContentBackground(.hidden)
+            .compatHideListBackground()
             .background(Color(UIColor.systemGroupedBackground))
         }
     }
@@ -553,7 +553,7 @@ struct CardEditView: View {
                     type = t
                     showTypePicker = false
                 }
-                .presentationDetents([.height(420)])
+                .compatSheetHeight(420)
             }
             .fullScreenCover(isPresented: $viewerOpen) {
                 PhotoViewer(images: AttachmentStore.loadAll(photos),
