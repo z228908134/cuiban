@@ -104,6 +104,19 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
                     Toggle("提示音", isOn: soundBinding)
                 }
 
+                // MARK: 优惠券提醒
+
+                Section(header: Text("优惠券提醒"), footer: Text("从过期前这么多天开始，每天上午 9 点、晚上 8 点各提醒一次，一直到过期当天。")) {
+                    Stepper(value: couponDaysBinding, in: CouponScheduler.leadRange) {
+                        HStack {
+                            Text("过期前开始提醒")
+                            Spacer()
+                            Text("\(store.settings.couponRemindDays) 天")
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                }
+
                 // MARK: 后台常驻
 
                 Section(header: Text("后台常驻"), footer: keepAliveFooter) {
@@ -384,6 +397,19 @@ let n = BackupStore.listBackups().count
                 } else {
                     BackgroundKeeper.shared.stop()
                 }
+            }
+        )
+    }
+
+    /// 券的「过期前开始提醒」天数。改完立刻重排一次券通知，不用等下次打开。
+    private var couponDaysBinding: Binding<Int> {
+        Binding(
+            get: { store.settings.couponRemindDays },
+            set: { v in
+                var s = store.settings
+                s.couponRemindDays = v
+                store.updateSettingsPublic(s)
+                CouponScheduler.rescheduleAll(coupons: CouponStore.shared.coupons)
             }
         )
     }

@@ -395,13 +395,15 @@ struct AppSettings: Codable, Equatable {
     /// 全局字号系数（1.0 = 标准）。真正的值存在 FontScale（UserDefaults）里，
     /// 这里跟着存一份，为了跟备份/恢复走
     var fontScale: Double = 1.0
+    /// 优惠券「过期前几天开始每天提醒」（1...30，默认 3）
+    var couponRemindDays: Int = 3
 
     init() {}
 
     // 容错解码：以后再加设置项，老版本存的设置也不会被清空
     enum CodingKeys: String, CodingKey {
         case defaultIntervalMinutes, snoozeMinutes, soundEnabled, keepAlive, theme,
-       autoBackup, backupIncludePhotos, maxBackups, fontScale
+       autoBackup, backupIncludePhotos, maxBackups, fontScale, couponRemindDays
     }
 
     init(from decoder: Decoder) throws {
@@ -416,6 +418,7 @@ struct AppSettings: Codable, Equatable {
         backupIncludePhotos = try c.decodeIfPresent(Bool.self, forKey: .backupIncludePhotos) ?? d.backupIncludePhotos
   maxBackups = try c.decodeIfPresent(Int.self, forKey: .maxBackups) ?? d.maxBackups
         fontScale = try c.decodeIfPresent(Double.self, forKey: .fontScale) ?? d.fontScale
+        couponRemindDays = try c.decodeIfPresent(Int.self, forKey: .couponRemindDays) ?? d.couponRemindDays
     }
 }
 

@@ -13,8 +13,9 @@ enum NotificationScheduler {
     static let actionLater = "CUIBAN_LATER"
 
     static let idPrefix = "cb."
-    /// 系统上限 64，留几条余量
-    static let totalSlots = 60
+    /// 系统上限 64。留 16 条给优惠券的每日提醒（一天两次），任务用剩下 48 条，
+    /// 合计不超过 64，免得系统把「最晚触发」的那几条悄悄丢掉。
+    static let totalSlots = 48
     /// 单个任务最多占多少条：任务很少时别让一个任务把配额一次吃光
     static let maxSlotsPerTask = 12
 
