@@ -16,6 +16,8 @@ struct BackupPayload: Codable {
     var notes: [NoteItem]? = nil
     /// 卡片备份（v1.6.14 起包含）
     var cards: [CardItem]? = nil
+    /// 优惠券备忘（v1.20 起包含）
+    var coupons: [Coupon]? = nil
 }
 
 /// 一份本地备份的条目（设置页展示用）
@@ -133,6 +135,7 @@ enum BackupStore {
         }
         payload.notes = NoteStore.shared.notes
         payload.cards = CardStore.shared.cards
+        payload.coupons = CouponStore.shared.coupons
         return payload
     }
 
@@ -163,9 +166,13 @@ enum BackupStore {
         if let cs = payload.cards {
             CardStore.shared.replaceAll(cs)
         }
+        if let cps = payload.coupons {
+            CouponStore.shared.replaceAll(cps)
+        }
         var s = "已恢复 \(payload.tasks.count) 个任务"
         if let ns = payload.notes, !ns.isEmpty { s += "、\(ns.count) 条笔记" }
         if let cs = payload.cards, !cs.isEmpty { s += "、\(cs.count) 张卡片" }
+        if let cps = payload.coupons, !cps.isEmpty { s += "、\(cps.count) 张优惠券" }
         if restoredPhotos > 0 { s += "、\(restoredPhotos) 张照片" }
         if payload.tasks.isEmpty { s += "（备份里没有任务，相当于清空）" }
         return s

@@ -52,19 +52,28 @@ struct RootView: View {
     @EnvironmentObject var alarm: AlarmCenter
     /// 字号变了就整棵视图树重建一次，保证所有页面的字体立刻重算
     @State private var fontRev = 0
+    /// 当前标签页（点了优惠券提醒要能直接跳过去）
+    @State private var tab = 0
 
     var body: some View {
         ZStack {
-            TabView {
+            TabView(selection: $tab) {
                 TaskListView()
                     .tabItem { Label("清单", systemImage: "checklist") }
                     .badge(store.overdueCount)
+                    .tag(0)
                 MonthView()
                     .tabItem { Label("日历", systemImage: "calendar") }
+                    .tag(1)
                 NotesView()
                     .tabItem { Label("笔记", systemImage: "note.text") }
+                    .tag(2)
+                CouponsView()
+                    .tabItem { Label("优惠券", systemImage: "ticket") }
+                    .tag(3)
                 SettingsView()
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
+                    .tag(4)
             }
             .accentColor(brandColor)
             .id(fontRev)
@@ -81,12 +90,17 @@ struct RootView: View {
         store.rollOverHitTasks()
         store.refreshAuth()
             NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
+  // 优惠券的过期提醒跟着重排一次（通知可能被系统或更新清过）
+            CouponStore.shared.reschedule()
   // 进 App 先同步一次 NAS 上的新数据。
             // **绝对不能放主线程**：WebDAV 走Semaphore 阻塞等待，
         // 最坏 25 秒首帧全白屏。先让界面出来，同步丢后台延后。
             if CloudSync.currentConfig.isOn {
 CloudSync.syncOnLaunch()
        }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cuibanOpenCoupons)) { _ in
+            tab = 3
         }
         .onReceive(NotificationCenter.default.publisher(for: FontScale.didChange)) { _ in
             withAnimation(.easeInOut(duration: 0.12)) { fontRev &+= 1 }
@@ -114,6 +128,7 @@ struct CuibanApp: App {
                 .environmentObject(store)
                 .environmentObject(alarm)
                 .environmentObject(NoteStore.shared)
+                .environmentObject(CouponStore.shared)
         }
         .onChange(of: scenePhase) { phase in
             switch phase {
@@ -123,6 +138,7 @@ struct CuibanApp: App {
                 store.rollOverHitTasks()
                 store.refreshAuth()
                 NotificationScheduler.rescheduleAll(tasks: store.tasks, settings: store.settings, catchUp: true)
+                CouponStore.shared.reschedule()
             case .background:
                 if store.settings.keepAlive {
                     BackgroundKeeper.shared.start()
@@ -169,8 +185,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         willPresent notification: UNNotification,
         withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
     ) {
-        let taskId = notification.request.content.userInfo["taskId"] as? String
+        let info = notification.request.content.userInfo
         let reqId = notification.request.identifier
+
+        // 优惠券的过期提醒：券还在、还没用、还没过期才弹
+        if let couponId = info["couponId"] as? String {
+            DispatchQueue.main.async {
+                if let c = CouponStore.shared.coupon(id: couponId), !c.isUsed, !c.isExpired {
+                    completionHandler([.banner, .list, .sound])
+                } else {
+                    center.removeDeliveredNotifications(withIdentifiers: [reqId])
+                    completionHandler([])
+                }
+            }
+            return
+        }
+
+        let taskId = info["taskId"] as? String
         DispatchQueue.main.async {
             guard let vet = AppDelegate.vetted(taskId), vet.live else {
                 // 存货或已失效：静默吞掉，顺手清出通知中心
@@ -190,7 +221,23 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         didReceive response: UNNotificationResponse,
         withCompletionHandler completionHandler: @escaping () -> Void
     ) {
-        let taskId = response.notification.request.content.userInfo["taskId"] as? String
+        let info = response.notification.request.content.userInfo
+        let taskId = info["taskId"] as? String
+
+        // 优惠券提醒：点按钮直接标记已用，点通知本体跳到「优惠券」页
+        if let couponId = info["couponId"] as? String {
+            DispatchQueue.main.async {
+                switch response.actionIdentifier {
+                case CouponScheduler.actionUsed:
+                    CouponStore.shared.markUsed(id: couponId)
+                default:
+                    NotificationCenter.default.post(name: .cuibanOpenCoupons, object: nil)
+                }
+                completionHandler()
+            }
+            return
+        }
+
         DispatchQueue.main.async {
             switch response.actionIdentifier {
             case NotificationScheduler.actionDone:

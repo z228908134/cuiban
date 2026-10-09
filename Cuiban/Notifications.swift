@@ -32,7 +32,17 @@ enum NotificationScheduler {
             intentIdentifiers: [],
             options: []
         )
-        center().setNotificationCategories([category])
+        // 优惠券的过期提醒：一条「标记已用」快捷按钮，免得还要进 App 点
+        let couponUsed = UNNotificationAction(
+            identifier: CouponScheduler.actionUsed, title: "✅ 标记已用", options: []
+        )
+        let couponCategory = UNNotificationCategory(
+            identifier: CouponScheduler.categoryId,
+            actions: [couponUsed],
+            intentIdentifiers: [],
+            options: []
+        )
+        center().setNotificationCategories([category, couponCategory])
     }
 
     static func requestAuthorization(completion: ((Bool) -> Void)? = nil) {

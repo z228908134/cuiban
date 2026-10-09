@@ -9,6 +9,8 @@ extension Notification.Name {
     /// 同步目标（文件夹 / WebDAV）配置变了。设置页监听它刷新「已连接」状态——
     /// 配置是在二级页里改的，主页面收不到任何 SwiftUI 状态变化通知。
     static let cloudConfigChanged = Notification.Name("cuiban.cloudConfigChanged")
+    /// 点了优惠券的过期提醒：把标签页切到「优惠券」
+    static let cuibanOpenCoupons = Notification.Name("cuiban.openCoupons")
 }
 
 // MARK: - 与 NAS / 文件夹同步
@@ -355,6 +357,7 @@ static func setHistoryKeep(_ v: Int) {
         p.settings = TaskStore.shared.settings
         p.notes = NoteStore.shared.notes
         p.cards = CardStore.shared.cards
+        p.coupons = CouponStore.shared.coupons
         if config.includePhotos {
             var photos: [String: String] = [:]
             let names = Set(TaskStore.shared.tasks.flatMap { $0.photos })
@@ -398,6 +401,7 @@ private static func encode(_ p: BackupPayload) throws -> Data {
             "tasks": dir.appendingPathComponent("cuiban_tasks.json"),
             "notes": dir.appendingPathComponent("cuiban_notes.json"),
             "cards": dir.appendingPathComponent("cuiban_cards.json"),
+            "coupons": dir.appendingPathComponent("cuiban_coupons.json"),
             "settings": dir.appendingPathComponent("cuiban_settings.json")
         ]
     }
