@@ -31,16 +31,4 @@ extension View {
             self
         }
     }
-
-    /// iOS 16 的 `TextField(..., axis: .vertical)` 与范围式 `lineLimit(1...n)`。
-    /// iOS 15 上退化为单行输入框（备注这类短文本够用）。
-    @ViewBuilder
-    func compatMultilineField(_ title: String, text: Binding<String>, maxLines: Int) -> some View {
-        if #available(iOS 16.0, *) {
-            TextField(title, text: text, axis: .vertical)
-                .lineLimit(1...maxLines)
-        } else {
-            TextField(title, text: text)
-        }
-    }
 }
