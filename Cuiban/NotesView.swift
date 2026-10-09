@@ -634,7 +634,9 @@ struct NoteEditorView: View {
         Button(action: action) {
             Text(label)
                 .font(.app(16, weight: bold || on ? .semibold : .regular))
-                .traitStyled(italic: italic, underline: underline, strike: strike)
+                .italic(italic)
+                .underline(underline)
+                .strikethrough(strike)
                 .foregroundColor(on ? .white : .primary)
                 .frame(maxWidth: .infinity, minHeight: 34)
                 .background(
