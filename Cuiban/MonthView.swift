@@ -333,7 +333,7 @@ struct MonthView: View {
                         .listRowBackground(Color.clear)
                 }
                 .listStyle(.plain)
-                .compatHideListBackground()
+                .scrollContentBackground(.hidden)
             }
         }
     }
