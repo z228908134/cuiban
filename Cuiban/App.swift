@@ -50,8 +50,9 @@ struct FabButton: View {
 struct RootView: View {
     @EnvironmentObject var store: TaskStore
     @EnvironmentObject var alarm: AlarmCenter
-    /// 字号变了就整棵视图树重建一次，保证所有页面的字体立刻重算
-    @State private var fontRev = 0
+    /// 字号变化的整树重建节拍（重建＝换 TabView 的身份，会把各页导航栈一起重置，
+    /// 所以「外观与字体」页开着时先挂着，退出后再补，见 FontRebuilder）
+    @ObservedObject private var fontRebuild = FontRebuilder.shared
     /// 当前标签页（点了优惠券提醒要能直接跳过去）
     @State private var tab = 0
 
@@ -76,7 +77,7 @@ struct RootView: View {
                     .tag(4)
             }
             .accentColor(brandColor)
-            .id(fontRev)
+            .id(fontRebuild.rev)
 
             if let id = alarm.activeTaskId, let task = store.task(id: id) {
                 AlarmOverlay(task: task)
@@ -103,7 +104,10 @@ CloudSync.syncOnLaunch()
             tab = 3
         }
         .onReceive(NotificationCenter.default.publisher(for: FontScale.didChange)) { _ in
-            withAnimation(.easeInOut(duration: 0.12)) { fontRev &+= 1 }
+            FontRebuilder.shared.fontChanged()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: FontScale.editEnded)) { _ in
+            FontRebuilder.shared.editingEnded()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cuibanDataChanged)) { _ in
             // 任何数据变化都触发一次同步（内部有 30 秒节流，不会频繁写网络）

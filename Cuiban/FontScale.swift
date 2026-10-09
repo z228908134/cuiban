@@ -13,6 +13,27 @@ final class FontScale: ObservableObject {
     static let shared = FontScale()
     /// 变化通知：根视图收到后强制重建整棵视图树，保证所有页面立刻生效
     static let didChange = Notification.Name("cuiban.fontScaleDidChange")
+    /// 字号调整结束（「外观与字体」页退出了）：根视图收到后把推迟的那次重建补上
+    static let editEnded = Notification.Name("cuiban.fontScaleEditEnded")
+
+    /// 正在调字号的页面数（「外观与字体」页存在时 > 0）。
+    ///
+    /// 为什么要有这个「暂停期」：根视图是靠换 `TabView` 的身份（`.id(fontRev)`）
+    /// 来让全 App 重算字体的，而换身份会把整棵视图树（含每个页面的 NavigationView）
+    /// 一起重建 —— 此时正推在栈上的「外观与字体」页会被弹回设置首页，
+    /// 用户看到的就是「调完字号自己闪回上一页」。
+    /// 所以调整期间只记下「待重建」，等退出这一页再补上。这一页自己会实时刷新
+    /// （它 @ObservedObject 了 FontScale），预览照样看得见。
+    private(set) var editingDepth = 0
+
+    func beginEditing() { editingDepth += 1 }
+
+    func endEditing() {
+        guard editingDepth > 0 else { return }
+        editingDepth -= 1
+        guard editingDepth == 0 else { return }
+        NotificationCenter.default.post(name: FontScale.editEnded, object: nil)
+    }
 
     /// 可选范围 80% ~ 160%
     static let range: ClosedRange<Double> = 0.8...1.6
@@ -62,6 +83,52 @@ final class FontScale: ObservableObject {
 
     var percentText: String {
         "\(Int((value * 100).rounded()))%"
+    }
+}
+
+// MARK: - 整树重建的调度
+
+/// 字号变化 → 全 App 重建的调度器（根视图订阅它，拿 `rev` 当 TabView 的 id）。
+///
+/// 放在类里而不是根视图的 `@State`，是为了能在延迟回调里安全改状态，
+/// 也把「什么时候该重建」的判断收在一处。
+/// 延迟的原因见 `FontScale.editingDepth`：字号只能在「外观与字体」二级页里改，
+/// 而重建会重置导航栈 —— 立刻重建就等于把这一页弹回设置首页。
+final class FontRebuilder: ObservableObject {
+    static let shared = FontRebuilder()
+
+    /// 重建计数：一变，根视图的 TabView 就换身份 → 所有页面（含 UIKit 编辑器）重算字体
+    @Published private(set) var rev = 0
+
+    /// 有「待补的重建」还没做
+    private var pending = false
+    /// 已排队一次延迟重建，别重复排
+    private var scheduled = false
+
+    private init() {}
+
+    /// 字号刚变
+    func fontChanged() {
+        if FontScale.shared.editingDepth > 0 {
+            pending = true
+        } else {
+            rev &+= 1
+        }
+    }
+
+    /// 「外观与字体」页退出了：把推迟的重建补上
+    func editingEnded() {
+        guard pending, !scheduled else { return }
+        scheduled = true
+        // 等返回动画走完再重建：半路换掉整棵树会把返回动画打断，看着很跳
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+            guard let self = self else { return }
+            self.scheduled = false
+            // 这半秒里又点回了「外观与字体」：继续挂着，等下次退出再补
+            guard FontScale.shared.editingDepth == 0 else { return }
+            self.pending = false
+            self.rev &+= 1
+        }
     }
 }
 

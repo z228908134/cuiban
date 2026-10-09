@@ -25,7 +25,7 @@ struct AppearanceSettingsView: View {
             // MARK: 字号
 
             Section(header: Text("字体大小"),
-                    footer: Text("整个 App 的字都会跟着一起变大变小，包括清单、日历、笔记和卡片。")) {
+                    footer: Text("整个 App 的字都会跟着一起变大变小，包括清单、日历、笔记、卡片和优惠券。")) {
                 // 四档预设
                 HStack(spacing: 8) {
                     ForEach(FontScale.presets, id: \.value) { p in
@@ -107,12 +107,30 @@ struct AppearanceSettingsView: View {
                             .foregroundColor(.secondary)
                         Spacer()
                     }
+                    HStack(spacing: 9) {
+                        Image(systemName: "ticket")
+                            .font(.app(18))
+                            .foregroundColor(brandColor)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("星巴克中杯券")
+                                .font(.app(15, weight: .semibold))
+                            Text("面额 ¥35 · 还剩 3 天过期")
+                                .font(.app(12))
+                                .foregroundColor(.orange)
+                        }
+                        Spacer()
+                    }
                 }
                 .padding(.vertical, 6)
             }
         }
         .navigationTitle("外观与字体")
         .navigationBarTitleDisplayMode(.inline)
+        // 这一页开着的时候，根视图推迟「整树重建」——否则换 TabView 身份会
+        // 把正推在栈上的本页弹回设置首页（调完字号自己闪回上一页）。
+        // 本页自己 @ObservedObject 了 FontScale，预览是实时变的；退出时再补重建。
+        .onAppear { fontScale.beginEditing() }
+        .onDisappear { fontScale.endEditing() }
     }
 
     private func setFontScale(_ v: Double) {
