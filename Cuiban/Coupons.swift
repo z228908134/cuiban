@@ -103,6 +103,23 @@ func moneyText(_ v: Double) -> String {
     return String(format: "¥%.2f", v)
 }
 
+/// 金额输入框里显示的文案（不带 ¥）。编辑旧券时把原金额放回去用。
+func plainMoney(_ v: Double) -> String {
+    if abs(v.rounded() - v) < 0.005 { return "\(Int(v.rounded()))" }
+    return String(format: "%.2f", v)
+}
+
+/// 金额输入的容错解析：允许「¥12」「12.5」「 12 」「12，5」，解析不了按 nil。
+/// 输入框是字符串驱动的原因：Double 绑定的 TextField 会把默认值 0 直接印在框里，
+/// 用户每次都得先删掉那个 0 才能打字（被吐槽过「麻烦死」）。
+func parseMoney(_ s: String) -> Double? {
+    var t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+    t = t.replacingOccurrences(of: "¥", with: "")
+        .replacingOccurrences(of: "，", with: ".")
+        .replacingOccurrences(of: ",", with: ".")
+    return Double(t)
+}
+
 // MARK: - 优惠券仓库
 
 final class CouponStore: ObservableObject {
@@ -475,9 +492,12 @@ struct CouponsView: View {
                             .font(.app(16, weight: .medium))
                             .foregroundColor(.primary)
                             .lineLimit(1)
-                        Text(moneyText(c.amount))
-                            .font(.app(13, weight: .semibold))
-                            .foregroundColor(brandColor)
+                        // 没填金额（0）就不显示，别一排「¥0」
+                        if c.amount > 0 {
+                            Text(moneyText(c.amount))
+                                .font(.app(13, weight: .semibold))
+                                .foregroundColor(brandColor)
+                        }
                     }
                     Text(subtitle(c))
                         .font(.app(12))
@@ -556,6 +576,9 @@ struct CouponEditView: View {
     @State private var draft: Coupon
     @State private var hasUsed: Bool
     @State private var hasProfit: Bool
+    /// 金额 / 利润的输入框内容（字符串驱动，见 parseMoney 的注释）
+    @State private var amountText: String
+    @State private var profitText: String
     private let isNew: Bool
 
     init(editing: Coupon? = nil) {
@@ -567,6 +590,10 @@ struct CouponEditView: View {
         _draft = State(initialValue: d)
         _hasUsed = State(initialValue: d.usedDate != nil)
         _hasProfit = State(initialValue: d.profit != nil)
+        // 金额 / 利润用字符串驱动：新券默认**空**（占位符「选填」），
+        // 不再把 0 印在框里让人每次先删
+        _amountText = State(initialValue: editing == nil ? "" : plainMoney(d.amount))
+        _profitText = State(initialValue: d.profit.map(plainMoney) ?? "")
         isNew = editing == nil
     }
 
@@ -578,7 +605,7 @@ struct CouponEditView: View {
                     HStack {
                         Text("金额")
                         Spacer()
-                        TextField("0", value: $draft.amount, format: .number)
+                        TextField("选填", text: $amountText)
                             .keyboardType(.decimalPad)
                             .multilineTextAlignment(.trailing)
                             .frame(width: 130)
@@ -617,7 +644,7 @@ struct CouponEditView: View {
                         HStack {
                             Text("出的利润")
                             Spacer()
-                            TextField("0", value: profitBinding, format: .number)
+                            TextField("选填", text: $profitText)
                                 .keyboardType(.decimalPad)
                                 .multilineTextAlignment(.trailing)
                                 .frame(width: 130)
@@ -667,11 +694,6 @@ struct CouponEditView: View {
     private var usedBinding: Binding<Date> {
         Binding(get: { draft.usedDate ?? Date() },
                 set: { draft.usedDate = $0 })
-    }
-
-    private var profitBinding: Binding<Double> {
-        Binding(get: { draft.profit ?? 0 },
-                set: { draft.profit = $0 })
     }
 
     // MARK: 过期时间快捷选项
@@ -725,10 +747,10 @@ struct CouponEditView: View {
     private func save() {
         var c = draft
         c.name = c.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        if c.amount < 0 { c.amount = 0 }
+        // 金额 / 利润：空着 = 没填（按 0 存），填了就容错解析（吃「¥12」「12，5」这类）
+        c.amount = max(0, parseMoney(amountText) ?? 0)
+        c.profit = hasProfit ? max(0, parseMoney(profitText) ?? 0) : nil
         if !hasUsed { c.usedDate = nil }
-        if !hasProfit { c.profit = nil }
-        if let p = c.profit, p < 0 { c.profit = 0 }
         store.upsert(c)
         dismiss()
     }
