@@ -105,12 +105,15 @@ struct AlarmOverlay: View {
 
                 // 配额型（一个月 N 次机会）光有「抢到了 +1」不够：
                 // 一次没抢到 / 这轮不想再抢了，也得能把这条清单点掉。
-                // 点掉走 complete()：本周期进度保留，下个机会按重复规则继续。
+                // 点掉走 complete()：只收掉这一轮，本周期进度保留，
+                // 没抢满的话明天 / 下个机会照常继续催（周期不会提前结束）。
                 if task.isQuotaTask && !task.inHitGroup {
                     Button {
                         store.complete(id: task.id)
                     } label: {
-                        Text("这条清单点掉（本轮先收尾）")
+                        Text(task.isQuotaFull
+                             ? "这条清单点掉（本周期已抢满）"
+                             : "这轮先点掉（还剩 \(task.hitRemaining) 次机会，照常催）")
                             .font(.app(16, weight: .semibold))
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)

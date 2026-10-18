@@ -625,8 +625,24 @@ final class TaskStore: ObservableObject {
                     //  算出来的 d 正好等于周期终点，同样落进这个分支）
                     freshCycle = d >= old.hitDeadline
                 }
-            } else {
+            } else if nextFloor != nil {
+                // 周期自然到期（rollOverHitTasks 收起，会传时间地板）：
+                // 本周期作废，从终点开新周期，进度清零
                 next = old.hitDeadline
+            } else {
+                // 手动点掉 / 完成（不传时间地板）：本周期还没抢满，
+                // 剩下的机会必须继续催。不能取 hitDeadline（= 本周期终点）——
+                // 那样点掉一次，这个月剩下的机会就一条提醒都没有了
+                //（v1.20.5 的「抢了第一次就再也不提醒」就是它）。
+                // 滚到明天同一时间，继续「每天都能抢」的节奏。
+                let cal = Calendar.current
+                let cand = cal.date(byAdding: .day, value: 1, to: old.dueDate)
+                    ?? old.dueDate.addingTimeInterval(86400)
+                let floor = nextFloor ?? Date()
+                // 已经严重逾期的（dueDate 早就不在明天了）：从现在起接着催
+                next = cand > floor ? cand : floor
+                // 本周期内的下一轮：进度（已抢 X/N）和周期起点原样带走
+                freshCycle = false
             }
         } else if old.repeatMode.recurs {
             next = nextOccurrence(of: old, floor: nextFloor ?? Date())
