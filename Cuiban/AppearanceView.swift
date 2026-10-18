@@ -25,7 +25,7 @@ struct AppearanceSettingsView: View {
             // MARK: 字号
 
             Section(header: Text("字体大小"),
-                    footer: Text("整个 App 的字都会跟着一起变大变小，包括清单、日历、笔记、卡片和优惠券。")) {
+                    footer: Text("整个 App 的字都会跟着一起变大变小，包括清单、日历、笔记、卡片、优惠券和充值卡。")) {
                 // 四档预设
                 HStack(spacing: 8) {
                     ForEach(FontScale.presets, id: \.value) { p in

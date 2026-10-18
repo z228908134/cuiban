@@ -70,7 +70,7 @@ struct RootView: View {
                     .tabItem { Label("笔记", systemImage: "note.text") }
                     .tag(2)
                 CouponsView()
-                    .tabItem { Label("优惠券", systemImage: "ticket") }
+                    .tabItem { Label("卡券", systemImage: "creditcard") }
                     .tag(3)
                 SettingsView()
                     .tabItem { Label("设置", systemImage: "gearshape.fill") }
@@ -133,6 +133,7 @@ struct CuibanApp: App {
                 .environmentObject(alarm)
                 .environmentObject(NoteStore.shared)
                 .environmentObject(CouponStore.shared)
+                .environmentObject(RechargeStore.shared)
         }
         .onChange(of: scenePhase) { phase in
             switch phase {

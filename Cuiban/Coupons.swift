@@ -385,51 +385,73 @@ struct CouponsView: View {
     @EnvironmentObject var store: CouponStore
     @State private var showingAdd = false
     @State private var editing: Coupon? = nil
+    /// 0 = 优惠券，1 = 充值卡。主 tab 只有 5 个位置（再多系统会折叠成「更多」），
+    /// 所以两个「卡券类」功能共用这一个 tab，进来用分段切。
+    @State private var mode = 0
 
     var body: some View {
+        NavigationView {
+            VStack(spacing: 0) {
+                Picker("", selection: $mode) {
+                    Text("优惠券").tag(0)
+                    Text("充值卡").tag(1)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 16)
+                .padding(.top, 4)
+                .padding(.bottom, 8)
+
+                if mode == 0 {
+                    couponList
+                } else {
+                    RechargeListView()
+                }
+            }
+            .navigationTitle(mode == 0 ? "优惠券" : "充值卡")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .navigationViewStyle(.stack)
+    }
+
+    private var couponList: some View {
         let active = store.active
         let archived = store.archived
 
-        return NavigationView {
-            List {
-                Section {
-                    summary
-                }
+        return List {
+            Section {
+                summary
+            }
 
+            Section {
+                if active.isEmpty {
+                    emptyHint
+                } else {
+                    ForEach(active) { c in row(c) }
+                }
+            } header: {
+                Label("待使用 · \(active.count)", systemImage: "ticket")
+            }
+
+            if !archived.isEmpty {
                 Section {
-                    if active.isEmpty {
-                        emptyHint
-                    } else {
-                        ForEach(active) { c in row(c) }
-                    }
+                    ForEach(archived) { c in row(c) }
                 } header: {
-                    Label("待使用 · \(active.count)", systemImage: "ticket")
+                    Text("已用 / 已过期")
                 }
-
-                if !archived.isEmpty {
-                    Section {
-                        ForEach(archived) { c in row(c) }
-                    } header: {
-                        Text("已用 / 已过期")
-                    }
-                }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("优惠券")
-            .navigationBarTitleDisplayMode(.inline)
-            .overlay(alignment: .bottomTrailing) {
-                FabButton { showingAdd = true }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 24)
-            }
-            .sheet(isPresented: $showingAdd) {
-                CouponEditView()
-            }
-            .sheet(item: $editing) { c in
-                CouponEditView(editing: c)
             }
         }
-        .navigationViewStyle(.stack)
+        .listStyle(.insetGrouped)
+        .overlay(alignment: .bottomTrailing) {
+            FabButton { showingAdd = true }
+                .padding(.trailing, 20)
+                .padding(.bottom, 24)
+        }
+        .sheet(isPresented: $showingAdd) {
+            CouponEditView()
+        }
+        .sheet(item: $editing) { c in
+            CouponEditView(editing: c)
+        }
     }
 
     // MARK: 顶部合计

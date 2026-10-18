@@ -18,6 +18,10 @@ struct BackupPayload: Codable {
     var cards: [CardItem]? = nil
     /// 优惠券备忘（v1.20 起包含）
     var coupons: [Coupon]? = nil
+    /// 充值卡平台（v1.20.5 起包含）
+    var rechargePlatforms: [RechargePlatform]? = nil
+    /// 充值卡购买记录（v1.20.5 起包含）
+    var rechargeRecords: [RechargeRecord]? = nil
 }
 
 /// 一份本地备份的条目（设置页展示用）
@@ -136,6 +140,8 @@ enum BackupStore {
         payload.notes = NoteStore.shared.notes
         payload.cards = CardStore.shared.cards
         payload.coupons = CouponStore.shared.coupons
+        payload.rechargePlatforms = RechargeStore.shared.platforms
+        payload.rechargeRecords = RechargeStore.shared.records
         return payload
     }
 
@@ -169,10 +175,16 @@ enum BackupStore {
         if let cps = payload.coupons {
             CouponStore.shared.replaceAll(cps)
         }
+        // 平台和记录要一起恢复：只恢复一半会让记录找不到平台
+        if payload.rechargePlatforms != nil || payload.rechargeRecords != nil {
+            RechargeStore.shared.replaceAll(platforms: payload.rechargePlatforms ?? [],
+                                            records: payload.rechargeRecords ?? [])
+        }
         var s = "已恢复 \(payload.tasks.count) 个任务"
         if let ns = payload.notes, !ns.isEmpty { s += "、\(ns.count) 条笔记" }
         if let cs = payload.cards, !cs.isEmpty { s += "、\(cs.count) 张卡片" }
         if let cps = payload.coupons, !cps.isEmpty { s += "、\(cps.count) 张优惠券" }
+        if let rs = payload.rechargeRecords, !rs.isEmpty { s += "、\(rs.count) 条充值卡记录" }
         if restoredPhotos > 0 { s += "、\(restoredPhotos) 张照片" }
         if payload.tasks.isEmpty { s += "（备份里没有任务，相当于清空）" }
         return s

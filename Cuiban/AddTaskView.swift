@@ -170,39 +170,43 @@ struct AddTaskView: View {
                 // 抢购类才需要往下翻的「机会次数」。
                 Section(header: Text("重复"), footer: Text(repeatFooter)) {
                     if draft.quota >= 2 {
-                        // 配额型的周期固定为一个月（「一月 N 次」），重复方式不参与
-                        HStack {
+                        // 配额型：**本周期**固定一个月（一个月 N 次机会），
+                        // 但「什么时候有机会」仍然由下面的重复方式决定 ——
+                        // 每周五开抢、一月两次，就必须能选「每周 + 周五」。
+                        // 以前这段直接不显示 Picker，只能按提醒时间那一次机会，
+                        // 一到下个周五就完全不会催。
+                        HStack(spacing: 6) {
                             Image(systemName: "calendar")
                                 .foregroundColor(.secondary)
-                            Text("周期固定为一个月")
+                            Text("本周期固定一个月")
                             Spacer()
                             Text("每月 \(draft.quota) 次机会")
                                 .foregroundColor(.secondary)
                         }
-                    } else {
-                        Picker("重复方式", selection: $draft.repeatMode) {
-                            ForEach(RepeatMode.allCases) { m in
-                                Text(m.label).tag(m)
-                            }
+                        .font(.app(15))
+                    }
+                    Picker("重复方式", selection: $draft.repeatMode) {
+                        ForEach(RepeatMode.allCases) { m in
+                            Text(m.label).tag(m)
                         }
-                        if draft.repeatMode == .weekly {
-                            weekdayChips
+                    }
+                    if draft.repeatMode == .weekly {
+                        weekdayChips
+                    }
+                    if draft.repeatMode == .everyNDays {
+                        HStack {
+                            Text("每隔")
+                            TextField("2", text: $dayIntervalText)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.center)
+                                .frame(width: 56)
+                                .textFieldStyle(.roundedBorder)
+                            Text("天一次")
+                            Spacer()
                         }
-                        if draft.repeatMode == .everyNDays {
-                            HStack {
-                                Text("每隔")
-                                TextField("2", text: $dayIntervalText)
-                                    .keyboardType(.numberPad)
-                                    .multilineTextAlignment(.center)
-                                    .frame(width: 56)
-                                    .textFieldStyle(.roundedBorder)
-                                Text("天一次")
-                                Spacer()
-                            }
-                        }
-                        if draft.repeatMode == .monthlyDays {
-                            monthDayGrid
-                        }
+                    }
+                    if draft.repeatMode == .monthlyDays {
+                        monthDayGrid
                     }
                 }
 
@@ -533,9 +537,9 @@ struct AddTaskView: View {
     /// 「本月机会次数」的说明
     private var quotaFooter: String {
         if draft.quota >= 2 {
-            return "一个月共 \(draft.quota) 次机会、每天都能抢的任务用这个：抢到一次点一下，"
-                + "没抢满会一直按原节奏催，抢满 \(draft.quota) 次本周期就毕业；"
-                + "没抢满则到月底自动作废，下个周期重新开始。"
+            return "本周期一个月共 \(draft.quota) 次机会（哪天开抢在上面的「重复」里设，"
+                + "比如「每周」+ 周五）：每抢到一次点一下，没抢满会一直按原节奏催，"
+                + "抢满 \(draft.quota) 次本周期就毕业；没抢满也会到月底作废、下个周期重新开始。"
         }
         return "一次机会的抢购 / 报名（比如每月 1 号 10 点）保持 1 次即可："
             + "抢到后任务不消失，提醒改成每天一次，到下次机会时刻自动收起。"
@@ -551,20 +555,28 @@ struct AddTaskView: View {
     private var repeatFooter: String {
         if draft.kind == .grabbing {
             // 抢购型：重复规则决定「机会时刻」
+            // 配额型（一月 N 次）额外说明：周期固定一个月，重复只管这一个月里哪天有机会
+            let quotaLead = draft.quota >= 2
+                ? "本周期一个月共 \(draft.quota) 次机会。"
+                : ""
+            if draft.quota >= 2 && draft.repeatMode == .none {
+                return quotaLead + "现在只有提醒时间这一次机会 —— 想每个周五都开抢，"
+                    + "把上面设成「每周」再选周五；否则这轮结束后要到下个周期才会再催。"
+            }
             if draft.repeatMode == .weekly, draft.weekdays.isEmpty {
-                return "没有选具体星期几，就按提醒时间那天每周一次机会。"
+                return quotaLead + "没有选具体星期几，就按提醒时间那天每周一次机会。"
             }
             if draft.repeatMode == .monthlyDays, draft.monthDays.isEmpty {
-                return "选几个日子（1~31 号），每月这几天各来一次机会。"
+                return quotaLead + "选几个日子（1~31 号），每月这几天各来一次机会。"
             }
             if draft.repeatMode == .everyNDays {
                 let n = min(365, max(1, Int(dayIntervalText) ?? 2))
-                return "第一次按上面的提醒时间，之后每隔 \(n) 天一次机会（一月约 \(max(1, 30 / n)) 次）。"
+                return quotaLead + "第一次按上面的提醒时间，之后每隔 \(n) 天一次机会（一月约 \(max(1, 30 / n)) 次）。"
             }
             if draft.repeatMode.recurs {
-                return "重复规则决定什么时候有机会；抢到后任务改成每天提醒，到下次机会时刻自动收起。"
+                return quotaLead + "重复规则决定什么时候有机会；每一次机会都单独催，抢到按「机会次数」累加。"
             }
-            return "只有提醒时间这一次机会。"
+            return quotaLead + "只有提醒时间这一次机会。"
         }
         // 周期型：重复规则决定「什么时候再做一次」
         if draft.repeatMode == .weekly, draft.weekdays.isEmpty {

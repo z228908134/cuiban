@@ -358,6 +358,8 @@ static func setHistoryKeep(_ v: Int) {
         p.notes = NoteStore.shared.notes
         p.cards = CardStore.shared.cards
         p.coupons = CouponStore.shared.coupons
+        p.rechargePlatforms = RechargeStore.shared.platforms
+        p.rechargeRecords = RechargeStore.shared.records
         if config.includePhotos {
             var photos: [String: String] = [:]
             let names = Set(TaskStore.shared.tasks.flatMap { $0.photos })
@@ -402,6 +404,7 @@ private static func encode(_ p: BackupPayload) throws -> Data {
             "notes": dir.appendingPathComponent("cuiban_notes.json"),
             "cards": dir.appendingPathComponent("cuiban_cards.json"),
             "coupons": dir.appendingPathComponent("cuiban_coupons.json"),
+            "recharge": dir.appendingPathComponent("cuiban_recharge.json"),
             "settings": dir.appendingPathComponent("cuiban_settings.json")
         ]
     }

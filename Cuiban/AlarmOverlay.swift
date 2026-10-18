@@ -103,6 +103,25 @@ struct AlarmOverlay: View {
                 }
                 .buttonStyle(.plain)
 
+                // 配额型（一个月 N 次机会）光有「抢到了 +1」不够：
+                // 一次没抢到 / 这轮不想再抢了，也得能把这条清单点掉。
+                // 点掉走 complete()：本周期进度保留，下个机会按重复规则继续。
+                if task.isQuotaTask && !task.inHitGroup {
+                    Button {
+                        store.complete(id: task.id)
+                    } label: {
+                        Text("这条清单点掉（本轮先收尾）")
+                            .font(.app(16, weight: .semibold))
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 14)
+                            .background(Color.white.opacity(0.18))
+                            .foregroundColor(.white)
+                            .clipShape(RoundedRectangle(cornerRadius: 14))
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.top, 12)
+                }
+
                 if task.inHitGroup {
                     // 已抢到的任务只有「今天先不提醒」这一个有意义的选择，
                     // 延后 5/10/30 分钟没意义（它的下一次提醒本来就是明天）

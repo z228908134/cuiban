@@ -1208,6 +1208,9 @@ struct NoteBodyEditor: UIViewRepresentable {
 
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: NoteBodyEditor
+        /// 正在点方框切换勾选：这次文本变化不是「打字」，
+        /// 别把工具栏当前待输入的样式刷到那个方框字符上
+        var togglingCheckbox = false
         init(_ p: NoteBodyEditor) { parent = p }
 
         func textViewDidChange(_ tv: UITextView) {
@@ -1220,7 +1223,9 @@ struct NoteBodyEditor: UIViewRepresentable {
             let old = parent.text
             // 增删文字后平移/裁剪样式区间；新输入落上「下一个输入」的样式
             parent.bridge.adjustStyles(old: old, new: clean)
-            parent.bridge.captureTyping(old: old, new: clean)
+            if !togglingCheckbox {
+                parent.bridge.captureTyping(old: old, new: clean)
+            }
             if parent.text != clean {
                 parent.text = clean
             }
@@ -1323,24 +1328,51 @@ struct NoteBodyEditor: UIViewRepresentable {
             guard hit.markLoc >= 0, hit.markLoc + hit.markLen <= plainNS.length else { return false }
 
             // 只替换行首那一个标记：缩进、后面的空格与正文都原样保留
-            let newAll = plainNS.replacingCharacters(
-                in: NSRange(location: hit.markLoc, length: hit.markLen),
-                with: hit.checked ? TextEditBridge.uncheckedMarkRaw : TextEditBridge.checkedMarkRaw
-            )
+            let markRange = NSRange(location: hit.markLoc, length: hit.markLen)
+            let newMark = hit.checked ? TextEditBridge.uncheckedMarkRaw : TextEditBridge.checkedMarkRaw
+            let newAll = plainNS.replacingCharacters(in: markRange, with: newMark)
+            let oldSel = tv.selectedRange
             parent.bridge.adjustStyles(old: plain, new: newAll)
-            // 整篇替换 text、整篇重上样式都会重置滚动位置 → 包一层只保 offset（光标由这里设）
-            NoteBodyEditor.keepOffset(tv) {
-                NoteBodyEditor.setTextKeepingOffset(tv, newAll)
-                NoteBodyEditor.restyleRaw(tv, styles: parent.bridge.styles,
-                                          pending: parent.bridge.pendingTraits)
-                tv.selectedRange = NSRange(location: min(hit.markLoc + hit.markLen, (newAll as NSString).length),
-                                           length: 0)
+
+            if (newMark as NSString).length == hit.markLen {
+                // **长度不变的局部替换**：只改 textStorage 里那一个字符。
+                // 之前是整篇 `tv.text = newAll` + 整篇重上样式：那两条路都会让
+                // UIKit 重新排版并自己再滚一次，同步设回 contentOffset 也挡不住
+                //（见 keepScroll 的注释），正文一长就会出现「勾一下就跳」。
+                // 长度不变时 textStorage 编辑既不动 offset、也不动总高度。
+                togglingCheckbox = true
+                tv.textStorage.beginEditing()
+                tv.textStorage.replaceCharacters(in: markRange, with: newMark)
+                tv.textStorage.endEditing()
+                togglingCheckbox = false
+
+                NoteBodyEditor.restyleLines(tv, in: markRange, styles: parent.bridge.styles,
+                                            pending: parent.bridge.pendingTraits)
+                // 光标原样留着：勾一下没必要把光标抢到这一行来（也会连带滚动）
+                if tv.selectedRange != oldSel { tv.selectedRange = oldSel }
+                parent.bridge.syncSelectionUI(tv)
+                if parent.text != newAll { parent.text = newAll }
+                parent.bridge.record(tv)
+            } else {
+                // 老写法（⬜️ / - [ ] 之类）标记长度不同，只能整篇替换；
+                // 光标按插入点平移，不强行跳到行首。
+                let delta = (newMark as NSString).length - hit.markLen
+                var sel = oldSel
+                if sel.location >= markRange.location + markRange.length {
+                    sel.location += delta
+                } else if sel.location > markRange.location {
+                    sel.location = markRange.location + max(0, delta)
+                }
+                NoteBodyEditor.keepOffset(tv) {
+                    NoteBodyEditor.setTextKeepingOffset(tv, newAll)
+                    NoteBodyEditor.restyleRaw(tv, styles: parent.bridge.styles,
+                                              pending: parent.bridge.pendingTraits)
+                }
+                tv.selectedRange = sel
+                parent.bridge.syncSelectionUI(tv)
+                if parent.text != newAll { parent.text = newAll }
+                parent.bridge.record(tv)
             }
-            parent.bridge.syncSelectionUI(tv)
-            if parent.text != newAll {
-                parent.text = newAll
-            }
-            parent.bridge.record(tv)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             return true
         }
