@@ -128,11 +128,18 @@ struct NotesView: View {
     @EnvironmentObject var noteStore: NoteStore
     @State private var showingAdd = false
     @State private var editing: NoteItem? = nil
+    @State private var query = ""
 
     var body: some View {
         // 排序只算一次。原来 ForEach 里直接写 noteStore.sorted，
         // 列表每次重绘都要重排一遍，笔记多了就是白耗。
-        let items = noteStore.sorted
+        // 搜索：标题或正文命中都算；空白搜索词直接放行
+        let items = noteStore.sorted.filter { n in
+            let q = query.trimmingCharacters(in: .whitespaces)
+            guard !q.isEmpty else { return true }
+            return n.title.localizedCaseInsensitiveContains(q)
+                || n.body.localizedCaseInsensitiveContains(q)
+        }
         return NavigationView {
             Group {
                 if noteStore.notes.isEmpty {
@@ -150,6 +157,7 @@ struct NotesView: View {
                 }
             }
             .navigationTitle("笔记")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索笔记")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottomTrailing) {
                 FabButton { showingAdd = true }

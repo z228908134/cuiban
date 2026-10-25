@@ -6,15 +6,24 @@ struct TaskListView: View {
     @State private var editing: TaskItem? = nil
     @State private var detail: TaskItem? = nil
     @State private var showFinished = false
+    @State private var query = ""
+
+    /// 搜索过滤：标题或备注命中都算；空白搜索词直接放行
+    private func match(_ t: TaskItem) -> Bool {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        guard !q.isEmpty else { return true }
+        return t.title.localizedCaseInsensitiveContains(q)
+            || t.note.localizedCaseInsensitiveContains(q)
+    }
 
     var body: some View {
         // 三份列表各算一次就好。原来 body 里 `store.overdue` / `upcoming` /
         // `finished` 被反复引用（overdue 3 次、finished 3 次），每引用一次
         // 就要 filter 一遍。收成局部常量后每次重绘只算一次。
-        let overdue = store.overdue
-        let upcoming = store.upcoming
-        let hit = store.hit
-        let finished = store.finished
+        let overdue = store.overdue.filter(match)
+        let upcoming = store.upcoming.filter(match)
+        let hit = store.hit.filter(match)
+        let finished = store.finished.filter(match)
 
         return NavigationView {
             List {
@@ -71,6 +80,7 @@ struct TaskListView: View {
                 }
             }
             .listStyle(.insetGrouped)
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索标题 / 备注")
             .navigationTitle("催办清单")
             // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
             .navigationBarTitleDisplayMode(.inline)

@@ -827,6 +827,8 @@ struct AddTaskView: View {
         }
 
         store.upsert(t)
+        // 保存成功给一次轻触感反馈，配合 dismiss 不至于「点了就没」
+        UINotificationFeedbackGenerator().notificationOccurred(.success)
         dismiss()
     }
 
@@ -968,7 +970,8 @@ struct GrowingTextView: View {
 
         func makeUIView(context: Context) -> UITextView {
             let tv = NoIntrinsicTextView()
-            tv.font = .systemFont(ofSize: 16)
+            // 跟随全局字号系数（外观页调字号时这里不能掉队）
+            tv.font = FontScale.app(16)
             tv.textColor = .label
             tv.backgroundColor = .clear
             tv.isScrollEnabled = false

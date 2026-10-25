@@ -27,6 +27,14 @@ struct SettingsView: View {
     @State private var cloudSummary = CloudSync.currentConfig
     /// App 回到前台时刷新一次摘要（同步可能在后台改过状态）
     @State private var wasBackgrounded = false
+    /// 待二次确认的清空操作（nil = 没有待确认的）
+    @State private var confirmClear: ClearScope? = nil
+
+    /// 都是不可撤销的批量删除，误触代价太大，必须二次确认
+    private enum ClearScope: String, Identifiable {
+        case finished, all
+        var id: String { rawValue }
+    }
 
 private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
 
@@ -227,12 +235,12 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
 
                 Section(header: Text("数据")) {
                     Button("清空已完成") {
-                        store.clearFinished()
+                        confirmClear = .finished
                     }
                     .foregroundColor(.orange)
 
                     Button("清空全部任务", role: .destructive) {
-                        store.clearAll()
+                        confirmClear = .all
                     }
                     .foregroundColor(.red)
                 }
@@ -258,6 +266,11 @@ store.refreshAuth()
         refreshBackupSummary()
         startPendingTimer()
             }
+  .onDisappear {
+      // 切走 tab 就停掉 4 秒一次的跨进程查询，别让设置页在背后白耗
+      pendingTimer?.cancel()
+      pendingTimer = nil
+  }
   .onChange(of: scenePhase) { p in
                 // TabView 会保留所有 tab，onAppear 只触发一次。
       // 用户在别的页面改完备份设置回来时，这里重新算一次摘要
@@ -271,7 +284,25 @@ refreshBackupSummary()
         wasBackgrounded = (p != .active)
      }
   }
-        .navigationViewStyle(.stack)
+            .navigationViewStyle(.stack)
+            .confirmationDialog(
+                confirmClear == .all ? "清空全部任务？" : "清空所有已完成的任务？",
+                isPresented: Binding(
+                    get: { confirmClear != nil },
+                    set: { if !$0 { confirmClear = nil } }
+                ),
+                titleVisibility: .visible,
+                presenting: confirmClear
+            ) { scope in
+                Button(scope == .all ? "全部删除" : "删除已完成", role: .destructive) {
+                    if scope == .all { store.clearAll() } else { store.clearFinished() }
+                }
+                Button("取消", role: .cancel) {}
+            } message: { scope in
+                Text(scope == .all
+                     ? "所有任务（含已完成）都会被删掉，无法恢复。"
+                     : "已完成的任务会被删掉，无法恢复。")
+            }
     }
 
   /// 通知权限的待提醒数：只在设置页可见 + App 在前台时才开定时器。
