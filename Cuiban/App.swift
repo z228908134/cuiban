@@ -148,6 +148,14 @@ struct CuibanApp: App {
                 if store.settings.keepAlive {
                     BackgroundKeeper.shared.start()
                     AlarmLoop.shared.rearmIfNeeded()
+                } else {
+                    // 不开后台常驻：进后台这一刻把阶梯网格重排一遍。
+                    // 之后无论用户手动杀掉 App 还是被系统回收，
+                    // 预排的通知都会按「密催→逐级放宽」的节奏一直响，
+                    // 没点完成就不会停（重开 App 时会立即重排加密）。
+                    NotificationScheduler.rescheduleAll(
+                        tasks: store.tasks, settings: store.settings, catchUp: false
+                    )
                 }
             default:
                 break

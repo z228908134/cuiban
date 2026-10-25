@@ -382,6 +382,11 @@ struct AppSettings: Codable, Equatable {
     var defaultIntervalMinutes: Int = 5
     var snoozeMinutes: Int = 10
     var soundEnabled: Bool = true
+    /// 强提醒（临界警报）：越过专注模式/勿扰，音量拉满，直到点完成才停。
+    /// 需要签名里带 com.apple.developer.usernotifications.critical-alerts
+    /// 权限（自签/企业分发可用；上 App Store 需向 Apple 专项申请），
+    /// 没有权限时系统会自动降级为普通时效性通知，不会出问题。
+    var criticalAlerts: Bool = false
     /// 后台常驻：让 App 留在后台按秒计时，实现真正「一直催」
     var keepAlive: Bool = true
     /// 外观：跟随系统 / 浅色 / 深色
@@ -402,7 +407,7 @@ struct AppSettings: Codable, Equatable {
 
     // 容错解码：以后再加设置项，老版本存的设置也不会被清空
     enum CodingKeys: String, CodingKey {
-        case defaultIntervalMinutes, snoozeMinutes, soundEnabled, keepAlive, theme,
+        case defaultIntervalMinutes, snoozeMinutes, soundEnabled, criticalAlerts, keepAlive, theme,
        autoBackup, backupIncludePhotos, maxBackups, fontScale, couponRemindDays
     }
 
@@ -412,6 +417,7 @@ struct AppSettings: Codable, Equatable {
         defaultIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .defaultIntervalMinutes) ?? d.defaultIntervalMinutes
         snoozeMinutes = try c.decodeIfPresent(Int.self, forKey: .snoozeMinutes) ?? d.snoozeMinutes
         soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? d.soundEnabled
+        criticalAlerts = try c.decodeIfPresent(Bool.self, forKey: .criticalAlerts) ?? d.criticalAlerts
         keepAlive = try c.decodeIfPresent(Bool.self, forKey: .keepAlive) ?? d.keepAlive
         theme = try c.decodeIfPresent(ThemeMode.self, forKey: .theme) ?? d.theme
         autoBackup = try c.decodeIfPresent(Bool.self, forKey: .autoBackup) ?? d.autoBackup

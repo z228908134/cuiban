@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- 强提醒（临界警报）权限：越过专注模式/勿扰，音量拉满。
+	     自签/企业分发可直接用；上 App Store 需向 Apple 专项申请。
+	     签名里没有这个权限时，App 内的强提醒开关会被系统自动降级为
+	     普通时效性通知，功能不炸、只是没那么响。 -->
+	<key>com.apple.developer.usernotifications.critical-alerts</key>
+	<true/>
+</dict>
+</plist>

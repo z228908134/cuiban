@@ -52,8 +52,20 @@ enum NotificationScheduler {
         }
     }
 
-    static func soundName() -> UNNotificationSound {
-        return UNNotificationSound(named: UNNotificationSoundName(rawValue: "nag.wav"))
+    /// 通知铃声：普通通知用 nag.wav；开了强提醒则用「临界警报」音量拉满版，
+    /// 勿扰/静音模式下也照响。
+    static func soundName(critical: Bool = false) -> UNNotificationSound {
+        let name = UNNotificationSoundName(rawValue: "nag.wav")
+        if critical {
+            return UNNotificationSound.criticalSoundNamed(name, withAudioVolume: 1.0)
+        }
+        return UNNotificationSound(named: name)
+    }
+
+    /// 中断级别：强提醒用 .critical（越过专注模式和勿扰，锁屏直接亮屏响铃），
+    /// 否则用 .timeSensitive（能在专注模式下挤出来的最高普通档）。
+    static func interruptionLevel(for settings: AppSettings) -> UNNotificationInterruptionLevel {
+        settings.criticalAlerts ? .critical : .timeSensitive
     }
 
     // MARK: 重排（去抖 + 后台）
@@ -219,6 +231,21 @@ enum NotificationScheduler {
         return 1                                 // 更远的先占 1 条
     }
 
+    // MARK: 阶梯步进（App 被杀后也能一直催）
+    //
+    // App 活着时有 AlarmLoop 每分钟重排，催促无限延续；但后台常驻关掉、
+    // 或用户手动杀掉 App 后，能响的只剩预排进系统的这几十条通知。
+    // 原来的网格是「固定间隔 × 12 条」，默认 5 分钟间隔只够催 1 小时，
+    // 之后 App 不打开就彻底安静 —— 正是「杀掉软件就不催了」的根子。
+    //
+    // 现在改成阶梯：前几条按用户设定间隔密催，之后逐级加倍，
+    // 上限 2 小时一条。12 条能覆盖约 9 小时；用户重新打开 App 时
+    // 网格会立刻重排加密。间隔短/任务少时 App 活着，阶梯根本轮不到用。
+    private static func ladderStep(base: TimeInterval, fired: Int) -> TimeInterval {
+        let widened = base * pow(2.0, Double(fired / 2))
+        return min(widened, 2 * 3600)
+    }
+
     static func schedule(_ task: TaskItem, settings: AppSettings, limit: Int, catchUp: Bool) {
         // 保险丝：已完成的任务绝不排通知。上游 performReschedule 已经过滤，
         // 但这条防线太便宜了，值得留着 —— 任何调用方拿错快照都炸不出通知。
@@ -289,11 +316,9 @@ enum NotificationScheduler {
             content.threadIdentifier = task.id
             content.userInfo = ["taskId": task.id]
             if settings.soundEnabled {
-                content.sound = soundName()
+                content.sound = soundName(critical: settings.criticalAlerts)
             }
-            if #available(iOS 15.0, *) {
-                content.interruptionLevel = .timeSensitive
-            }
+            content.interruptionLevel = interruptionLevel(for: settings)
 
             let comps = Calendar.current.dateComponents(
                 [.year, .month, .day, .hour, .minute, .second], from: fire
@@ -305,7 +330,9 @@ enum NotificationScheduler {
                 trigger: trigger
             )
             c.add(request)
-            fire = fire.addingTimeInterval(step)
+            // 「已抢到」的任务固定每天跟一次，不套阶梯放宽；
+            // 普通任务用阶梯步进，App 被杀后也能持续催更久。
+            fire = fire.addingTimeInterval(task.inHitGroup ? step : ladderStep(base: step, fired: index + i))
         }
     }
 
@@ -349,11 +376,9 @@ enum NotificationScheduler {
         content.threadIdentifier = task.id
         content.userInfo = ["taskId": task.id]
         if settings.soundEnabled {
-            content.sound = soundName()
+            content.sound = soundName(critical: settings.criticalAlerts)
         }
-        if #available(iOS 15.0, *) {
-            content.interruptionLevel = .timeSensitive
-        }
+        content.interruptionLevel = interruptionLevel(for: settings)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)
         let request = UNNotificationRequest(
             identifier: "\(idPrefix)now.\(task.id).\(task.nagCount)",
@@ -369,10 +394,8 @@ enum NotificationScheduler {
         let content = UNMutableNotificationContent()
         content.title = "⏰ 测试提醒"
         content.body = "看到通知并听到警报声，说明催办已经准备好了。"
-        content.sound = soundName()
-        if #available(iOS 15.0, *) {
-            content.interruptionLevel = .timeSensitive
-        }
+        content.sound = soundName(critical: TaskStore.shared.settings.criticalAlerts)
+        content.interruptionLevel = interruptionLevel(for: TaskStore.shared.settings)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
         center().add(UNNotificationRequest(identifier: "\(idPrefix)test", content: content, trigger: trigger))
     }

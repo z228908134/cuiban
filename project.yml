@@ -27,8 +27,8 @@ targets:
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations:
           - zh-Hans
-        CFBundleShortVersionString: "1.20.6"
-        CFBundleVersion: "80"
+        CFBundleShortVersionString: "1.21.0"
+        CFBundleVersion: "81"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
@@ -53,5 +53,7 @@ targets:
         PRODUCT_NAME: Cuiban
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "80"
-        MARKETING_VERSION: "1.20.6"
+        CURRENT_PROJECT_VERSION: "81"
+        MARKETING_VERSION: "1.21.0"
+        # 临界警报（强提醒）权限声明，见 Cuiban/Cuiban.entitlements
+        CODE_SIGN_ENTITLEMENTS: Cuiban/Cuiban.entitlements

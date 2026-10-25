@@ -102,6 +102,7 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
                         }
                     }
                     Toggle("提示音", isOn: soundBinding)
+                    Toggle("强提醒（越过勿扰/专注模式）", isOn: criticalBinding)
                 }
 
                 // MARK: 优惠券提醒
@@ -346,9 +347,9 @@ let n = BackupStore.listBackups().count
     private var keepAliveFooter: some View {
         Text(
             "开启后 App 会在后台保持运行并按秒精确计时，催促无限延续；代价是略微耗电。" +
-            "关闭后改用系统预排通知（受系统 64 条上限约束），更省电，App 被杀掉也能照响。\n\n" +
-            "任务多时这 60 条配额会自动按紧急程度分配：越急的任务排得越密（最多 12 条），" +
-            "不急的至少留 1 条占位；任务数超过 60 个时优先保最临近截止的那些，其余等腾出配额后自动补上。"
+            "关闭后改用系统预排通知（受系统 64 条上限约束），更省电：预排通知会先按设定间隔密催，" +
+            "之后逐级放宽（上限 2 小时一条），即使 App 被杀掉也能持续催 9 小时以上，" +
+            "重新打开 App 会立刻重排加密；任务多时配额自动按紧急程度分配，越急排得越密（最多 12 条）。"
         )
     }
 
@@ -381,6 +382,21 @@ let n = BackupStore.listBackups().count
                 var s = store.settings
                 s.soundEnabled = v
                 store.updateSettingsPublic(s)
+            }
+        )
+    }
+
+    /// 强提醒：改完立刻重排一次，让已排的通知马上换上临界警报级别
+    private var criticalBinding: Binding<Bool> {
+        Binding(
+            get: { store.settings.criticalAlerts },
+            set: { v in
+                var s = store.settings
+                s.criticalAlerts = v
+                store.updateSettingsPublic(s)
+                NotificationScheduler.rescheduleAll(
+                    tasks: store.tasks, settings: s, catchUp: false
+                )
             }
         )
     }
