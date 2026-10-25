@@ -15,6 +15,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 无凭据推送通道：本地 git 没有存 GitHub 令牌时，改动以 diff 形式
+      # 放进 patches/ 目录推上来（内容小），编译前在这里套用。
+      # patch 只改工作区、不进提交，打完包仓库依然是干净的单提交历史。
+      - name: Apply pending patches
+        run: |
+          shopt -s nullglob
+          for p in patches/*.diff; do
+            echo "Applying $p"
+            git apply --whitespace=nowarn "$p"
+          done
+          git diff --stat
+
       - name: Select newest Xcode
         run: |
           set -e

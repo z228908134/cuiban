@@ -1,0 +1,408 @@
+diff --git a/Cuiban/AddTaskView.swift b/Cuiban/AddTaskView.swift
+index 5bcc422..340c674 100644
+--- a/Cuiban/AddTaskView.swift
++++ b/Cuiban/AddTaskView.swift
+@@ -827,6 +827,8 @@ struct AddTaskView: View {
+         }
+ 
+         store.upsert(t)
++        // 保存成功给一次轻触感反馈，配合 dismiss 不至于「点了就没」
++        UINotificationFeedbackGenerator().notificationOccurred(.success)
+         dismiss()
+     }
+ 
+@@ -968,7 +970,8 @@ struct GrowingTextView: View {
+ 
+         func makeUIView(context: Context) -> UITextView {
+             let tv = NoIntrinsicTextView()
+-            tv.font = .systemFont(ofSize: 16)
++            // 跟随全局字号系数（外观页调字号时这里不能掉队）
++            tv.font = FontScale.app(16)
+             tv.textColor = .label
+             tv.backgroundColor = .clear
+             tv.isScrollEnabled = false
+diff --git a/Cuiban/App.swift b/Cuiban/App.swift
+index f0ea392..5388787 100644
+--- a/Cuiban/App.swift
++++ b/Cuiban/App.swift
+@@ -148,6 +148,14 @@ struct CuibanApp: App {
+                 if store.settings.keepAlive {
+                     BackgroundKeeper.shared.start()
+                     AlarmLoop.shared.rearmIfNeeded()
++                } else {
++                    // 不开后台常驻：进后台这一刻把阶梯网格重排一遍。
++                    // 之后无论用户手动杀掉 App 还是被系统回收，
++                    // 预排的通知都会按「密催→逐级放宽」的节奏一直响，
++                    // 没点完成就不会停（重开 App 时会立即重排加密）。
++                    NotificationScheduler.rescheduleAll(
++                        tasks: store.tasks, settings: store.settings, catchUp: false
++                    )
+                 }
+             default:
+                 break
+diff --git a/Cuiban/Cuiban.entitlements b/Cuiban/Cuiban.entitlements
+new file mode 100644
+index 0000000..01967fa
+--- /dev/null
++++ b/Cuiban/Cuiban.entitlements
+@@ -0,0 +1,12 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
++<plist version="1.0">
++<dict>
++	<!-- 强提醒（临界警报）权限：越过专注模式/勿扰，音量拉满。
++	     自签/企业分发可直接用；上 App Store 需向 Apple 专项申请。
++	     签名里没有这个权限时，App 内的强提醒开关会被系统自动降级为
++	     普通时效性通知，功能不炸、只是没那么响。 -->
++	<key>com.apple.developer.usernotifications.critical-alerts</key>
++	<true/>
++</dict>
++</plist>
+diff --git a/Cuiban/Models.swift b/Cuiban/Models.swift
+index f1911bc..d6b2086 100644
+--- a/Cuiban/Models.swift
++++ b/Cuiban/Models.swift
+@@ -382,6 +382,11 @@ struct AppSettings: Codable, Equatable {
+     var defaultIntervalMinutes: Int = 5
+     var snoozeMinutes: Int = 10
+     var soundEnabled: Bool = true
++    /// 强提醒（临界警报）：越过专注模式/勿扰，音量拉满，直到点完成才停。
++    /// 需要签名里带 com.apple.developer.usernotifications.critical-alerts
++    /// 权限（自签/企业分发可用；上 App Store 需向 Apple 专项申请），
++    /// 没有权限时系统会自动降级为普通时效性通知，不会出问题。
++    var criticalAlerts: Bool = false
+     /// 后台常驻：让 App 留在后台按秒计时，实现真正「一直催」
+     var keepAlive: Bool = true
+     /// 外观：跟随系统 / 浅色 / 深色
+@@ -402,7 +407,7 @@ struct AppSettings: Codable, Equatable {
+ 
+     // 容错解码：以后再加设置项，老版本存的设置也不会被清空
+     enum CodingKeys: String, CodingKey {
+-        case defaultIntervalMinutes, snoozeMinutes, soundEnabled, keepAlive, theme,
++        case defaultIntervalMinutes, snoozeMinutes, soundEnabled, criticalAlerts, keepAlive, theme,
+        autoBackup, backupIncludePhotos, maxBackups, fontScale, couponRemindDays
+     }
+ 
+@@ -412,6 +417,7 @@ struct AppSettings: Codable, Equatable {
+         defaultIntervalMinutes = try c.decodeIfPresent(Int.self, forKey: .defaultIntervalMinutes) ?? d.defaultIntervalMinutes
+         snoozeMinutes = try c.decodeIfPresent(Int.self, forKey: .snoozeMinutes) ?? d.snoozeMinutes
+         soundEnabled = try c.decodeIfPresent(Bool.self, forKey: .soundEnabled) ?? d.soundEnabled
++        criticalAlerts = try c.decodeIfPresent(Bool.self, forKey: .criticalAlerts) ?? d.criticalAlerts
+         keepAlive = try c.decodeIfPresent(Bool.self, forKey: .keepAlive) ?? d.keepAlive
+         theme = try c.decodeIfPresent(ThemeMode.self, forKey: .theme) ?? d.theme
+         autoBackup = try c.decodeIfPresent(Bool.self, forKey: .autoBackup) ?? d.autoBackup
+diff --git a/Cuiban/NotesView.swift b/Cuiban/NotesView.swift
+index 3476c48..b623243 100644
+--- a/Cuiban/NotesView.swift
++++ b/Cuiban/NotesView.swift
+@@ -128,11 +128,18 @@ struct NotesView: View {
+     @EnvironmentObject var noteStore: NoteStore
+     @State private var showingAdd = false
+     @State private var editing: NoteItem? = nil
++    @State private var query = ""
+ 
+     var body: some View {
+         // 排序只算一次。原来 ForEach 里直接写 noteStore.sorted，
+         // 列表每次重绘都要重排一遍，笔记多了就是白耗。
+-        let items = noteStore.sorted
++        // 搜索：标题或正文命中都算；空白搜索词直接放行
++        let items = noteStore.sorted.filter { n in
++            let q = query.trimmingCharacters(in: .whitespaces)
++            guard !q.isEmpty else { return true }
++            return n.title.localizedCaseInsensitiveContains(q)
++                || n.body.localizedCaseInsensitiveContains(q)
++        }
+         return NavigationView {
+             Group {
+                 if noteStore.notes.isEmpty {
+@@ -150,6 +157,7 @@ struct NotesView: View {
+                 }
+             }
+             .navigationTitle("笔记")
++            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索笔记")
+             .navigationBarTitleDisplayMode(.inline)
+             .overlay(alignment: .bottomTrailing) {
+                 FabButton { showingAdd = true }
+diff --git a/Cuiban/Notifications.swift b/Cuiban/Notifications.swift
+index 3f5e919..6a6a90c 100644
+--- a/Cuiban/Notifications.swift
++++ b/Cuiban/Notifications.swift
+@@ -52,8 +52,20 @@ enum NotificationScheduler {
+         }
+     }
+ 
+-    static func soundName() -> UNNotificationSound {
+-        return UNNotificationSound(named: UNNotificationSoundName(rawValue: "nag.wav"))
++    /// 通知铃声：普通通知用 nag.wav；开了强提醒则用「临界警报」音量拉满版，
++    /// 勿扰/静音模式下也照响。
++    static func soundName(critical: Bool = false) -> UNNotificationSound {
++        let name = UNNotificationSoundName(rawValue: "nag.wav")
++        if critical {
++            return UNNotificationSound.criticalSoundNamed(name, withAudioVolume: 1.0)
++        }
++        return UNNotificationSound(named: name)
++    }
++
++    /// 中断级别：强提醒用 .critical（越过专注模式和勿扰，锁屏直接亮屏响铃），
++    /// 否则用 .timeSensitive（能在专注模式下挤出来的最高普通档）。
++    static func interruptionLevel(for settings: AppSettings) -> UNNotificationInterruptionLevel {
++        settings.criticalAlerts ? .critical : .timeSensitive
+     }
+ 
+     // MARK: 重排（去抖 + 后台）
+@@ -219,6 +231,21 @@ enum NotificationScheduler {
+         return 1                                 // 更远的先占 1 条
+     }
+ 
++    // MARK: 阶梯步进（App 被杀后也能一直催）
++    //
++    // App 活着时有 AlarmLoop 每分钟重排，催促无限延续；但后台常驻关掉、
++    // 或用户手动杀掉 App 后，能响的只剩预排进系统的这几十条通知。
++    // 原来的网格是「固定间隔 × 12 条」，默认 5 分钟间隔只够催 1 小时，
++    // 之后 App 不打开就彻底安静 —— 正是「杀掉软件就不催了」的根子。
++    //
++    // 现在改成阶梯：前几条按用户设定间隔密催，之后逐级加倍，
++    // 上限 2 小时一条。12 条能覆盖约 9 小时；用户重新打开 App 时
++    // 网格会立刻重排加密。间隔短/任务少时 App 活着，阶梯根本轮不到用。
++    private static func ladderStep(base: TimeInterval, fired: Int) -> TimeInterval {
++        let widened = base * pow(2.0, Double(fired / 2))
++        return min(widened, 2 * 3600)
++    }
++
+     static func schedule(_ task: TaskItem, settings: AppSettings, limit: Int, catchUp: Bool) {
+         // 保险丝：已完成的任务绝不排通知。上游 performReschedule 已经过滤，
+         // 但这条防线太便宜了，值得留着 —— 任何调用方拿错快照都炸不出通知。
+@@ -289,11 +316,9 @@ enum NotificationScheduler {
+             content.threadIdentifier = task.id
+             content.userInfo = ["taskId": task.id]
+             if settings.soundEnabled {
+-                content.sound = soundName()
+-            }
+-            if #available(iOS 15.0, *) {
+-                content.interruptionLevel = .timeSensitive
++                content.sound = soundName(critical: settings.criticalAlerts)
+             }
++            content.interruptionLevel = interruptionLevel(for: settings)
+ 
+             let comps = Calendar.current.dateComponents(
+                 [.year, .month, .day, .hour, .minute, .second], from: fire
+@@ -305,7 +330,9 @@ enum NotificationScheduler {
+                 trigger: trigger
+             )
+             c.add(request)
+-            fire = fire.addingTimeInterval(step)
++            // 「已抢到」的任务固定每天跟一次，不套阶梯放宽；
++            // 普通任务用阶梯步进，App 被杀后也能持续催更久。
++            fire = fire.addingTimeInterval(task.inHitGroup ? step : ladderStep(base: step, fired: index + i))
+         }
+     }
+ 
+@@ -349,11 +376,9 @@ enum NotificationScheduler {
+         content.threadIdentifier = task.id
+         content.userInfo = ["taskId": task.id]
+         if settings.soundEnabled {
+-            content.sound = soundName()
+-        }
+-        if #available(iOS 15.0, *) {
+-            content.interruptionLevel = .timeSensitive
++            content.sound = soundName(critical: settings.criticalAlerts)
+         }
++        content.interruptionLevel = interruptionLevel(for: settings)
+         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)
+         let request = UNNotificationRequest(
+             identifier: "\(idPrefix)now.\(task.id).\(task.nagCount)",
+@@ -369,10 +394,8 @@ enum NotificationScheduler {
+         let content = UNMutableNotificationContent()
+         content.title = "⏰ 测试提醒"
+         content.body = "看到通知并听到警报声，说明催办已经准备好了。"
+-        content.sound = soundName()
+-        if #available(iOS 15.0, *) {
+-            content.interruptionLevel = .timeSensitive
+-        }
++        content.sound = soundName(critical: TaskStore.shared.settings.criticalAlerts)
++        content.interruptionLevel = interruptionLevel(for: TaskStore.shared.settings)
+         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
+         center().add(UNNotificationRequest(identifier: "\(idPrefix)test", content: content, trigger: trigger))
+     }
+diff --git a/Cuiban/SettingsView.swift b/Cuiban/SettingsView.swift
+index 9d7c569..7af48a6 100644
+--- a/Cuiban/SettingsView.swift
++++ b/Cuiban/SettingsView.swift
+@@ -27,6 +27,14 @@ struct SettingsView: View {
+     @State private var cloudSummary = CloudSync.currentConfig
+     /// App 回到前台时刷新一次摘要（同步可能在后台改过状态）
+     @State private var wasBackgrounded = false
++    /// 待二次确认的清空操作（nil = 没有待确认的）
++    @State private var confirmClear: ClearScope? = nil
++
++    /// 都是不可撤销的批量删除，误触代价太大，必须二次确认
++    private enum ClearScope: String, Identifiable {
++        case finished, all
++        var id: String { rawValue }
++    }
+ 
+ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
+ 
+@@ -102,6 +110,7 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
+                         }
+                     }
+                     Toggle("提示音", isOn: soundBinding)
++                    Toggle("强提醒（越过勿扰/专注模式）", isOn: criticalBinding)
+                 }
+ 
+                 // MARK: 优惠券提醒
+@@ -226,12 +235,12 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
+ 
+                 Section(header: Text("数据")) {
+                     Button("清空已完成") {
+-                        store.clearFinished()
++                        confirmClear = .finished
+                     }
+                     .foregroundColor(.orange)
+ 
+                     Button("清空全部任务", role: .destructive) {
+-                        store.clearAll()
++                        confirmClear = .all
+                     }
+                     .foregroundColor(.red)
+                 }
+@@ -257,6 +266,11 @@ store.refreshAuth()
+         refreshBackupSummary()
+         startPendingTimer()
+             }
++  .onDisappear {
++      // 切走 tab 就停掉 4 秒一次的跨进程查询，别让设置页在背后白耗
++      pendingTimer?.cancel()
++      pendingTimer = nil
++  }
+   .onChange(of: scenePhase) { p in
+                 // TabView 会保留所有 tab，onAppear 只触发一次。
+       // 用户在别的页面改完备份设置回来时，这里重新算一次摘要
+@@ -270,7 +284,25 @@ refreshBackupSummary()
+         wasBackgrounded = (p != .active)
+      }
+   }
+-        .navigationViewStyle(.stack)
++            .navigationViewStyle(.stack)
++            .confirmationDialog(
++                confirmClear == .all ? "清空全部任务？" : "清空所有已完成的任务？",
++                isPresented: Binding(
++                    get: { confirmClear != nil },
++                    set: { if !$0 { confirmClear = nil } }
++                ),
++                titleVisibility: .visible,
++                presenting: confirmClear
++            ) { scope in
++                Button(scope == .all ? "全部删除" : "删除已完成", role: .destructive) {
++                    if scope == .all { store.clearAll() } else { store.clearFinished() }
++                }
++                Button("取消", role: .cancel) {}
++            } message: { scope in
++                Text(scope == .all
++                     ? "所有任务（含已完成）都会被删掉，无法恢复。"
++                     : "已完成的任务会被删掉，无法恢复。")
++            }
+     }
+ 
+   /// 通知权限的待提醒数：只在设置页可见 + App 在前台时才开定时器。
+@@ -346,9 +378,9 @@ let n = BackupStore.listBackups().count
+     private var keepAliveFooter: some View {
+         Text(
+             "开启后 App 会在后台保持运行并按秒精确计时，催促无限延续；代价是略微耗电。" +
+-            "关闭后改用系统预排通知（受系统 64 条上限约束），更省电，App 被杀掉也能照响。\n\n" +
+-            "任务多时这 60 条配额会自动按紧急程度分配：越急的任务排得越密（最多 12 条），" +
+-            "不急的至少留 1 条占位；任务数超过 60 个时优先保最临近截止的那些，其余等腾出配额后自动补上。"
++            "关闭后改用系统预排通知（受系统 64 条上限约束），更省电：预排通知会先按设定间隔密催，" +
++            "之后逐级放宽（上限 2 小时一条），即使 App 被杀掉也能持续催 9 小时以上，" +
++            "重新打开 App 会立刻重排加密；任务多时配额自动按紧急程度分配，越急排得越密（最多 12 条）。"
+         )
+     }
+ 
+@@ -385,6 +417,21 @@ let n = BackupStore.listBackups().count
+         )
+     }
+ 
++    /// 强提醒：改完立刻重排一次，让已排的通知马上换上临界警报级别
++    private var criticalBinding: Binding<Bool> {
++        Binding(
++            get: { store.settings.criticalAlerts },
++            set: { v in
++                var s = store.settings
++                s.criticalAlerts = v
++                store.updateSettingsPublic(s)
++                NotificationScheduler.rescheduleAll(
++                    tasks: store.tasks, settings: s, catchUp: false
++                )
++            }
++        )
++    }
++
+     private var keepAliveBinding: Binding<Bool> {
+         Binding(
+             get: { store.settings.keepAlive },
+diff --git a/Cuiban/TaskListView.swift b/Cuiban/TaskListView.swift
+index 88fe733..228db71 100644
+--- a/Cuiban/TaskListView.swift
++++ b/Cuiban/TaskListView.swift
+@@ -6,15 +6,24 @@ struct TaskListView: View {
+     @State private var editing: TaskItem? = nil
+     @State private var detail: TaskItem? = nil
+     @State private var showFinished = false
++    @State private var query = ""
++
++    /// 搜索过滤：标题或备注命中都算；空白搜索词直接放行
++    private func match(_ t: TaskItem) -> Bool {
++        let q = query.trimmingCharacters(in: .whitespaces)
++        guard !q.isEmpty else { return true }
++        return t.title.localizedCaseInsensitiveContains(q)
++            || t.note.localizedCaseInsensitiveContains(q)
++    }
+ 
+     var body: some View {
+         // 三份列表各算一次就好。原来 body 里 `store.overdue` / `upcoming` /
+         // `finished` 被反复引用（overdue 3 次、finished 3 次），每引用一次
+         // 就要 filter 一遍。收成局部常量后每次重绘只算一次。
+-        let overdue = store.overdue
+-        let upcoming = store.upcoming
+-        let hit = store.hit
+-        let finished = store.finished
++        let overdue = store.overdue.filter(match)
++        let upcoming = store.upcoming.filter(match)
++        let hit = store.hit.filter(match)
++        let finished = store.finished.filter(match)
+ 
+         return NavigationView {
+             List {
+@@ -71,6 +80,7 @@ struct TaskListView: View {
+                 }
+             }
+             .listStyle(.insetGrouped)
++            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索标题 / 备注")
+             .navigationTitle("催办清单")
+             // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
+             .navigationBarTitleDisplayMode(.inline)
+diff --git a/project.yml b/project.yml
+index 356b9b1..89711aa 100644
+--- a/project.yml
++++ b/project.yml
+@@ -27,8 +27,8 @@ targets:
+         CFBundleDevelopmentRegion: zh-Hans
+         CFBundleLocalizations:
+           - zh-Hans
+-        CFBundleShortVersionString: "1.20.6"
+-        CFBundleVersion: "80"
++        CFBundleShortVersionString: "1.21.0"
++        CFBundleVersion: "81"
+         LSRequiresIPhoneOS: true
+         UILaunchScreen: {}
+         UIRequiredDeviceCapabilities:
+@@ -53,5 +53,7 @@ targets:
+         PRODUCT_NAME: Cuiban
+         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+         TARGETED_DEVICE_FAMILY: "1"
+-        CURRENT_PROJECT_VERSION: "80"
+-        MARKETING_VERSION: "1.20.6"
++        CURRENT_PROJECT_VERSION: "81"
++        MARKETING_VERSION: "1.21.0"
++        # 临界警报（强提醒）权限声明，见 Cuiban/Cuiban.entitlements
++        CODE_SIGN_ENTITLEMENTS: Cuiban/Cuiban.entitlements
