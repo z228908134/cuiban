@@ -27,6 +27,32 @@ func human(_ seconds: TimeInterval) -> String {
 let brandColor = Color(red: 0.97, green: 0.33, blue: 0.18)
 let alarmRed = Color(red: 0.76, green: 0.16, blue: 0.10)
 
+// MARK: - 深链
+
+/// 小组件唤回 App 的入口。
+///
+/// iOS 16 的小组件里放不了按钮（`Button(intent:)` 要 17），想「点一下就抢到」
+/// 只能把行做成链接：`cuiban://task/<id>` → 打开 App、直接弹出那条任务的
+/// 催促页，再点一下「抢到了 +1」。比在清单里翻找已经少两步。
+enum DeepLink {
+    case task(String)
+
+    static func parse(_ url: URL) -> DeepLink? {
+        guard url.scheme?.lowercased() == "cuiban" else { return nil }
+        let host = (url.host ?? "").lowercased()
+        let segs = url.pathComponents.filter { $0 != "/" && !$0.isEmpty }
+        if host == "task", let id = segs.first { return .task(id) }
+        // 兼容 cuiban:///task/<id> 这种不带 host 的写法
+        if segs.count >= 2, segs[0].lowercased() == "task" { return .task(segs[1]) }
+        return nil
+    }
+
+    static func url(forTask id: String) -> URL? {
+        let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+        return URL(string: "cuiban://task/\(safe)")
+    }
+}
+
 // MARK: - 右下角悬浮新建按钮
 
 struct FabButton: View {
@@ -102,6 +128,16 @@ CloudSync.syncOnLaunch()
         }
         .onReceive(NotificationCenter.default.publisher(for: .cuibanOpenCoupons)) { _ in
             tab = 3
+        }
+        .onOpenURL { url in
+            guard case .task(let id)? = DeepLink.parse(url) else { return }
+            tab = 0
+            // 小组件上的快照是几十秒前的，先让「已抢到但已跨过下次机会」的
+            // 任务归位，否则可能弹出一个其实已经毕业的任务
+            store.rollOverHitTasks()
+            guard let t = store.task(id: id), !t.isDone else { return }
+            // silent：用户是自己点进来的，没必要再突然炸响一声
+            alarm.show(taskId: t.id, silent: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: FontScale.didChange)) { _ in
             FontRebuilder.shared.fontChanged()

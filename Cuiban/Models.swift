@@ -987,13 +987,17 @@ final class AlarmCenter: ObservableObject {
     static let shared = AlarmCenter()
 
     @Published var activeTaskId: String? = nil
+    /// 这一次是「用户自己点进来的」（小组件 → 深链），不是被催的：
+    /// 页面照弹，但不要一进来就响铃。
+    private(set) var silentOpen = false
 
-    func show(taskId: String?) {
+    func show(taskId: String?, silent: Bool = false) {
         guard let taskId = taskId else { return }
         guard let t = TaskStore.shared.task(id: taskId), !t.isDone else { return }
         guard activeTaskId != taskId else { return }
+        silentOpen = silent
         activeTaskId = taskId
-        if TaskStore.shared.settings.soundEnabled {
+        if TaskStore.shared.settings.soundEnabled && !silent {
             AlarmSound.shared.start()
         }
     }
@@ -1001,6 +1005,7 @@ final class AlarmCenter: ObservableObject {
     func dismiss(id: String? = nil) {
         if let id = id, let cur = activeTaskId, cur != id { return }
         activeTaskId = nil
+        silentOpen = false
         AlarmSound.shared.stop()
     }
 }

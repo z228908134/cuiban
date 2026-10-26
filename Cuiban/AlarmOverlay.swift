@@ -49,8 +49,15 @@ struct AlarmOverlay: View {
                         .font(.app(14))
                         .foregroundColor(.white.opacity(0.9))
                         .padding(.top, 12)
-                } else {
+                } else if task.effectiveDue <= now {
                     Text("已逾期 \(human(overdueSeconds)) · 第 \(max(1, task.nagCount)) 次催你")
+                        .font(.app(14))
+                        .foregroundColor(.white.opacity(0.9))
+                        .padding(.top, 12)
+                } else {
+                    // 从小部件点进来「提前看一眼」的情形：还没到点，
+                    // 别照着催办的文案谎报「已逾期 0 秒」
+                    Text("还有 \(human(task.effectiveDue.timeIntervalSince(now))) 到点")
                         .font(.app(14))
                         .foregroundColor(.white.opacity(0.9))
                         .padding(.top, 12)
@@ -175,7 +182,8 @@ struct AlarmOverlay: View {
         }
         .onAppear {
             pulsing = true
-            if store.settings.soundEnabled && !muted {
+            // silentOpen：从小组件点进来的，静音着弹，别吓人一跳
+            if store.settings.soundEnabled && !muted && !alarm.silentOpen {
                 AlarmSound.shared.start()
             }
         }

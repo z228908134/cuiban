@@ -90,20 +90,33 @@ private extension View {
     }
 }
 
+/// 小组件 → 主 App 的深链。
+/// iOS 16 的小组件放不了按钮（`Button(intent:)` 要 17），能做的只有「点一下唤回 App」，
+/// 所以每行都是一个 Link：打开后主 App 直接弹出那条任务的催促页，再点一下「抢到了」。
+/// 格式必须和主 App 的 `DeepLink.parse` 对齐：cuiban://task/<id>
+private func deepLink(_ id: String) -> URL {
+    let safe = id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id
+    return URL(string: "cuiban://task/\(safe)") ?? URL(string: "cuiban://task")!
+}
+
 private struct TaskRow: View {
     let e: WEntry
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(hhmm(e.due))
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundColor(e.overdue ? .red : .secondary)
-                .fixedSize()
-            Text(e.title)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.tail)
-            Spacer(minLength: 0)
+        Link(destination: deepLink(e.id)) {
+            HStack(spacing: 6) {
+                Text(hhmm(e.due))
+                    .font(.system(size: 11, weight: .semibold, design: .rounded))
+                    .foregroundColor(e.overdue ? .red : .secondary)
+                    .fixedSize()
+                Text(e.title)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+            }
+            // 行尾的空白也得算在点击区里，否则只有文字能点中
+            .contentShape(Rectangle())
         }
     }
 }
@@ -237,8 +250,14 @@ struct NagWidgetEntryView: View {
     @Environment(\.widgetFamily) private var family
     let entry: NagTimelineEntry
 
-    @ViewBuilder
     var body: some View {
+        content
+            // 兜底：点空白处 / 锁屏那几种（放不了 Link）都落到第一条任务
+            .widgetURL(entry.items.first.map { deepLink($0.id) })
+    }
+
+    @ViewBuilder
+    private var content: some View {
         switch family {
         case .systemSmall: SmallView(entry: entry)
         case .systemMedium: MediumView(entry: entry)

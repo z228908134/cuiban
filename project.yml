@@ -30,8 +30,14 @@ targets:
         CFBundleDevelopmentRegion: zh-Hans
         CFBundleLocalizations:
           - zh-Hans
-        CFBundleShortVersionString: "1.22.0"
-        CFBundleVersion: "83"
+        # 小组件点一下要能直接回到那条任务。iOS 16 的小组件没有交互按钮
+        # （Button(intent:) 要 17），只能靠 URL scheme 唤回 App 再弹确认页。
+        CFBundleURLTypes:
+          - CFBundleURLName: com.cuiban.app
+            CFBundleURLSchemes:
+              - cuiban
+        CFBundleShortVersionString: "1.23.0"
+        CFBundleVersion: "84"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
@@ -56,8 +62,8 @@ targets:
         PRODUCT_NAME: Cuiban
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "83"
-        MARKETING_VERSION: "1.22.0"
+        CURRENT_PROJECT_VERSION: "84"
+        MARKETING_VERSION: "1.23.0"
         # 临界警报（强提醒）权限声明，见 Cuiban/Cuiban.entitlements
         CODE_SIGN_ENTITLEMENTS: Cuiban/Cuiban.entitlements
 
@@ -72,8 +78,8 @@ targets:
       path: Widget/Info.plist
       properties:
         # 和主 App 版本保持一致（不写的话 XcodeGen 默认 1.0）
-        CFBundleShortVersionString: "1.22.0"
-        CFBundleVersion: "83"
+        CFBundleShortVersionString: "1.23.0"
+        CFBundleVersion: "84"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -81,7 +87,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.cuiban.app.widget
         PRODUCT_NAME: CuibanWidget
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "83"
-        MARKETING_VERSION: "1.22.0"
+        CURRENT_PROJECT_VERSION: "84"
+        MARKETING_VERSION: "1.23.0"
         CODE_SIGN_ENTITLEMENTS: Widget/Widget.entitlements
         SKIP_INSTALL: YES
