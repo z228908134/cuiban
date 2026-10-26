@@ -1265,7 +1265,16 @@ struct NoteBodyEditor: UIViewRepresentable {
         private static func boxRect(tv: UITextView, markLoc: Int, markLen: Int) -> CGRect? {
             var rects: [CGRect] = []
             if let p0 = tv.position(from: tv.beginningOfDocument, offset: markLoc) {
-                rects.append(tv.caretRect(for: p0))
+                // ⚠️ 两个系统 API 的坐标系不一样：
+                //   caretRect(for:) 给的是「内容坐标」（相对文档，不随 contentOffset 变）；
+                //   firstRect(for:) 给的是「视图坐标」（已经减去滚动偏移）。
+                // 之前直接把两者取并集，只要正文一滚动，并集就被 caretRect 拖偏一屏，
+                // 热区整个跑偏 —— 这就是「勾选框要点好几次才点中」的根因。
+                // 统一转成视图坐标（减 contentOffset）再参与计算，与 hitTest 的点同系。
+                var cr = tv.caretRect(for: p0)
+                cr.origin.x -= tv.contentOffset.x
+                cr.origin.y -= tv.contentOffset.y
+                rects.append(cr)
                 if markLen > 0,
                    let p1 = tv.position(from: tv.beginningOfDocument, offset: markLoc + markLen),
                    let r = tv.textRange(from: p0, to: p1) {
@@ -1294,11 +1303,12 @@ struct NoteBodyEditor: UIViewRepresentable {
                 if lr.length > 0, let info = TextEditBridge.markInfo(in: ns.substring(with: lr)) {
                     let markLoc = lr.location + info.loc
                     if let box = boxRect(tv: tv, markLoc: markLoc, markLen: info.markLen) {
-                        // 热区：左右各放宽一截（覆盖方框 + 后面的空格），上下也留余量
-                        let hot = CGRect(x: box.minX - 22,
-                                         y: box.minY - 14,
-                                         width: box.width + 52,
-                                         height: box.height + 26)
+                        // 热区：左右各放宽一截（覆盖方框 + 后面的空格），上下也留余量。
+                        // 偏小的话手指稍偏就落在正文上变光标定位，只能重试。
+                        let hot = CGRect(x: box.minX - 26,
+                                         y: box.minY - 15,
+                                         width: box.width + 64,
+                                         height: box.height + 28)
                         if hot.contains(point) {
                             let dx = point.x - box.midX
                             let dy = point.y - box.midY
