@@ -971,7 +971,7 @@ struct GrowingTextView: View {
         func makeUIView(context: Context) -> UITextView {
             let tv = NoIntrinsicTextView()
             // 跟随全局字号系数（外观页调字号时这里不能掉队）
-            tv.font = FontScale.app(16)
+            tv.font = UIFont.app(16)
             tv.textColor = .label
             tv.backgroundColor = .clear
             tv.isScrollEnabled = false
