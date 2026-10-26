@@ -441,6 +441,15 @@ final class TaskStore: ObservableObject {
     private let tasksFile: URL
     private let settingsFile: URL
 
+    // MARK: 删除撤销（照片延迟清理）
+    //
+    // 左滑删任务以前是立刻物理删照片，手一抖就找不回来了。
+    // 现在删除后先在内存里押 6 秒：期间点「撤销」任务原位放回、
+    // 通知恢复、照片一张不动；超时没人反悔才真正落盘删除。
+    // App 在这 6 秒内被杀的话照片只是多留到下次 vacuum，无害。
+    private var trash: (task: TaskItem, index: Int)? = nil
+    private var trashTimer: DispatchWorkItem? = nil
+
     private init() {
         let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
         tasksFile = dir.appendingPathComponent("cuiban_tasks.json")
@@ -575,15 +584,47 @@ final class TaskStore: ObservableObject {
     }
 
     func delete(id: String) {
-        if let i = index(of: id) {
-            AttachmentStore.delete(tasks[i].photos)
-        }
-        tasks.removeAll { $0.id == id }
+        guard let i = index(of: id) else { return }
+        // 上一条还挂在撤销窗口里的先落袋为安，别让它无限期占着
+        finalizeTrash()
+        trash = (tasks[i], i)
+        tasks.remove(at: i)
         save()
         AlarmCenter.shared.dismiss()
         // 这条任务没了，它的待发和已送达通知立即撤掉，不等重排的去抖
         NotificationScheduler.removeAll(for: id)
         NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
+        scheduleTrashFinalize()
+    }
+
+    /// 撤销窗口结束时还没人反悔：照片才真正从磁盘删掉
+    private func scheduleTrashFinalize() {
+        trashTimer?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.finalizeTrash() }
+        trashTimer = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 6, execute: work)
+    }
+
+    private func finalizeTrash() {
+        trashTimer?.cancel()
+        trashTimer = nil
+        if let t = trash { AttachmentStore.delete(t.task.photos) }
+        trash = nil
+    }
+
+    /// 撤销最近一次删除：任务放回原位、通知重排、照片不动。
+    /// - Returns: 是否有可撤销的删除
+    @discardableResult
+    func undoDelete() -> Bool {
+        guard let t = trash else { return false }
+        trashTimer?.cancel()
+        trashTimer = nil
+        trash = nil
+        let i = min(t.index, tasks.count)
+        tasks.insert(t.task, at: i)
+        save()
+        NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
+        return true
     }
 
     /// - Parameter nextFloor: 推算「下一次机会」时的时间地板，默认「现在」。

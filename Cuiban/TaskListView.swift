@@ -7,6 +7,9 @@ struct TaskListView: View {
     @State private var detail: TaskItem? = nil
     @State private var showFinished = false
     @State private var query = ""
+    /// 删除后的撤销提示条：非 nil 时显示，5.5 秒后自动收起
+    @State private var deletedTitle: String? = nil
+    @State private var toastToken = UUID()
 
     /// 搜索过滤：标题或备注命中都算；空白搜索词直接放行
     private func match(_ t: TaskItem) -> Bool {
@@ -59,7 +62,7 @@ struct TaskListView: View {
                         }
                     } header: {
                         Label("已抢到 · 每天提醒 · \(hit.count)", systemImage: "checkmark.seal.fill")
-                            .foregroundColor(Color(red: 0.05, green: 0.43, blue: 0.34))
+                            .foregroundColor(Palette.hitGreen)
                     }
                 }
 
@@ -89,6 +92,29 @@ struct TaskListView: View {
                     .padding(.trailing, 20)
                     .padding(.bottom, 24)
             }
+            .overlay(alignment: .bottom) {
+                if let title = deletedTitle {
+                    HStack(spacing: 14) {
+                        Text("已删除「\(title)」")
+                            .font(.app(13))
+                            .foregroundColor(.white)
+                            .lineLimit(1)
+                        Button("撤销") {
+                            // 照片还在撤销窗口里，原位放回即可
+                            store.undoDelete()
+                            deletedTitle = nil
+                        }
+                        .font(.app(14, weight: .semibold))
+                        .foregroundColor(Palette.actionBlue)
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 11)
+                    .background(Capsule().fill(Color(UIColor.darkGray)))
+                    .padding(.bottom, 64)
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: deletedTitle)
             .sheet(isPresented: $showingAdd) {
                 AddTaskView()
             }
@@ -189,18 +215,21 @@ struct TaskListView: View {
             // 显示顺序 = 声明顺序的倒序（trailing 边从内到外排），所以想显示成
             // 「编辑 → 延后 → 删除」就得反着声明。
             Button {
+                deletedTitle = t.title
+                toastToken = UUID()
                 store.delete(id: t.id)
+                hideToastLater(token: toastToken)
             } label: {
                 swipeIcon("trash")
             }
-            .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
+            .tint(Palette.deleteRed)
 
             Button {
                 store.snooze(id: t.id)
             } label: {
                 swipeIcon("alarm")
             }
-            .tint(Color(red: 0.98, green: 0.58, blue: 0.00))
+            .tint(Palette.snoozeOrange)
 
             // 抢到 / 撤销。只给抢购型任务（「做」的任务没有抢的概念）：
             //   · 单次机会型：抢到后任务不消失，催促降为每天一次，到下轮机会自动收起；
@@ -216,8 +245,8 @@ struct TaskListView: View {
                     swipeIcon(t.inHitGroup ? "arrow.uturn.backward" : "checkmark.seal.fill")
                 }
                 .tint(t.inHitGroup
-                      ? Color(red: 0.42, green: 0.44, blue: 0.47)
-                      : Color(red: 0.05, green: 0.53, blue: 0.42))
+                      ? Palette.undoGray
+                      : Palette.grabGreen)
             }
 
             Button {
@@ -225,7 +254,7 @@ struct TaskListView: View {
             } label: {
                 swipeIcon("square.and.pencil")
             }
-            .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
+            .tint(Palette.actionBlue)
         }
     }
 
@@ -239,7 +268,15 @@ struct TaskListView: View {
     }
 
     /// 已抢到的青色：既不刺眼又能一眼看出「这条已经拿下了」
-    static let hitTint = Color(red: 0.05, green: 0.43, blue: 0.34)
+    static let hitTint = Palette.hitGreen
+
+    /// 删除提示条 5.5 秒后自动收起（和 TaskStore 里 6 秒的撤销窗口留出余量）。
+    /// 用 token 防止连续删两条时，第一条的定时器把第二条的提示提前收掉。
+    private func hideToastLater(token: UUID) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5.5) { [self] in
+            if token == toastToken { deletedTitle = nil }
+        }
+    }
 
     /// 行首状态图标：完成 / 已抢到 / 抢到一部分 / 未完成
     private func rowIcon(_ t: TaskItem) -> String {
@@ -305,6 +342,12 @@ struct TaskDetailView: View {
 
     var body: some View {
         NavigationView {
+            if store.task(id: task.id) == nil {
+                // 详情页开着的时候任务被删掉了（比如日历左滑、
+                // 或者另一处的批量清空）：
+                // 别拿快照里的僵尸数据继续展示，给个明确的交代。
+                goneView
+            } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 18) {
                     titleBlock
@@ -343,8 +386,27 @@ struct TaskDetailView: View {
                     start: viewerStart
                 )
             }
+            }
         }
         .navigationViewStyle(.stack)
+    }
+
+    /// 任务已被删除时的占位页
+    private var goneView: some View {
+        VStack(spacing: 10) {
+            Image(systemName: "trash.circle")
+                .font(.app(44))
+                .foregroundColor(.secondary)
+            Text("任务已删除")
+                .font(.app(17, weight: .semibold))
+            Text("这条任务刚才被删掉了，关掉这页即可。")
+                .font(.app(13))
+                .foregroundColor(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(UIColor.systemGroupedBackground).ignoresSafeArea())
+        .navigationTitle("任务详情")
+        .navigationBarTitleDisplayMode(.inline)
     }
 
     // MARK: 标题
@@ -442,7 +504,7 @@ struct TaskDetailView: View {
                         .padding(.vertical, 12)
                         .background(current.isQuotaFull
                                     ? Color(UIColor.tertiarySystemFill)
-                                    : Color(red: 0.05, green: 0.53, blue: 0.42))
+                                    : Palette.grabGreen)
                         .foregroundColor(current.isQuotaFull ? .primary : .white)
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                 }

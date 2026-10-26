@@ -497,13 +497,13 @@ extension View {
     /// 表单右侧的「值」：蓝色，和参考图一致
     func asCardValue() -> some View {
         font(.app(15))
-            .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
+            .foregroundColor(Palette.linkBlue)
     }
 
     /// 右侧的尖括号
     func asCardChevron() -> some View {
         font(.app(13, weight: .semibold))
-            .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
+            .foregroundColor(Palette.linkBlue)
     }
 }
 
@@ -704,7 +704,7 @@ struct CardEditView: View {
                     .padding(.vertical, 14)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color(red: 0.0, green: 0.48, blue: 1.0))
+                            .fill(Palette.linkBlue)
                     )
             }
             .buttonStyle(.plain)
@@ -805,7 +805,7 @@ struct CardTypePicker: View {
                         if t == current {
                             Image(systemName: "checkmark")
                                 .font(.app(15, weight: .semibold))
-                                .foregroundColor(Color(red: 0.0, green: 0.48, blue: 1.0))
+                                .foregroundColor(Palette.linkBlue)
                         }
                     }
                     .padding(.horizontal, 18)

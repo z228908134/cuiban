@@ -462,7 +462,7 @@ struct CouponsView: View {
             Divider().frame(height: 26)
             stat("面额合计", moneyText(store.activeFaceValue))
             Divider().frame(height: 26)
-            stat("已出利润", moneyText(store.profitTotal), tint: Color(red: 0.85, green: 0.20, blue: 0.16))
+            stat("已出利润", moneyText(store.profitTotal), tint: Palette.profitRed)
         }
         .listRowBackground(Color.clear)
     }

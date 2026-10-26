@@ -30,14 +30,18 @@ struct MonthView: View {
     private let weekNames = ["日", "一", "二", "三", "四", "五", "六"]
 
     var body: some View {
-        NavigationView {
+        // entries 是重计算（所有任务 × 预推日期），以前 monthGrid 每个
+        // 格子都各自调一遍 self.entries —— 42 个格子就是 42 遍；
+        // 现在 body 里算一次往下传。
+        let entries = self.entries
+        return NavigationView {
             VStack(spacing: 0) {
                 header
                 weekHeader
-                calendarArea
+                calendarArea(entries)
                     .gesture(swipeGesture)
                 Divider()
-                daySection
+                daySection(entries)
             }
             .navigationTitle("日历")
             .navigationBarTitleDisplayMode(.inline)
@@ -122,9 +126,9 @@ struct MonthView: View {
     // MARK: - 月历 / 周条
 
     @ViewBuilder
-    private var calendarArea: some View {
+    private func calendarArea(_ entries: [Date: [DayEntry]]) -> some View {
         if collapsed {
-            weekGrid
+            weekGrid(entries)
             Button {
                 withAnimation(.spring(response: 0.32, dampingFraction: 0.85)) {
                     collapsed = false
@@ -139,15 +143,15 @@ struct MonthView: View {
             }
             .buttonStyle(.plain)
         } else {
-            monthGrid
+            monthGrid(entries)
         }
     }
 
-    private var monthGrid: some View {
+    private func monthGrid(_ entries: [Date: [DayEntry]]) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7),
                   spacing: 0) {
             ForEach(monthCells, id: \.self) { d in
-                dayCell(d, dimmed: !cal.isDate(d, equalTo: anchor, toGranularity: .month))
+                dayCell(d, dimmed: !cal.isDate(d, equalTo: anchor, toGranularity: .month), entries: entries)
             }
         }
         .padding(.horizontal, 4)
@@ -155,11 +159,11 @@ struct MonthView: View {
     }
 
     /// 收起后的周条：所选日期所在的那一周
-    private var weekGrid: some View {
+    private func weekGrid(_ entries: [Date: [DayEntry]]) -> some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 0), count: 7),
                   spacing: 0) {
             ForEach(weekCells, id: \.self) { d in
-                dayCell(d, dimmed: false)
+                dayCell(d, dimmed: false, entries: entries)
             }
         }
         .padding(.horizontal, 4)
@@ -179,7 +183,7 @@ struct MonthView: View {
     }
 
     /// 单个日期格子（滴答式：数字在上，农历/节日在下，休班徽章在右上）
-    private func dayCell(_ d: Date, dimmed: Bool) -> some View {
+    private func dayCell(_ d: Date, dimmed: Bool, entries: [Date: [DayEntry]]) -> some View {
         let key = cal.startOfDay(for: d)
         let items = entries[key] ?? []
         let isSelected = cal.isDate(d, inSameDayAs: selected)
@@ -277,8 +281,8 @@ struct MonthView: View {
     // 左滑用系统 List + swipeActions（和清单页、卡片页一致）。
     // 自绘那套把按钮放在 ZStack 底层，触摸命中会被上层内容层吃掉，按钮点不动，已废弃。
 
-    private var daySection: some View {
-        let items = dayEntries
+    private func daySection(_ entries: [Date: [DayEntry]]) -> some View {
+        let items = dayEntries(entries)
         return VStack(spacing: 0) {
             if items.isEmpty {
                 ScrollView {
@@ -314,14 +318,14 @@ struct MonthView: View {
                                 } label: {
                                     calendarSwipeIcon("trash")
                                 }
-                                .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
+                                .tint(Palette.deleteRed)
 
                                 Button {
                                     editing = e.task
                                 } label: {
                                     calendarSwipeIcon("square.and.pencil")
                                 }
-                                .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
+                                .tint(Palette.actionBlue)
                             }
                             .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
                             .listRowSeparator(.hidden)
@@ -492,7 +496,7 @@ struct MonthView: View {
         return map
     }
 
-    private var dayEntries: [DayEntry] {
+    private func dayEntries(_ entries: [Date: [DayEntry]]) -> [DayEntry] {
         (entries[cal.startOfDay(for: selected)] ?? []).sorted { $0.date < $1.date }
     }
 

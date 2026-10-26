@@ -28,6 +28,10 @@ struct AddTaskView: View {
     @State private var parseSummary: String? = nil
     @State private var tipsShown: [String] = []
     @State private var titleAutoFilled = false
+    /// 「更多选项」是否展开：新建默认收起（少干扰），编辑已有任务默认展开
+    @State private var showMore = false
+    /// 提醒时间已过去时的确认弹窗
+    @State private var showPostponeAlert = false
 
     // MARK: 一句话
 
@@ -47,6 +51,7 @@ struct AddTaskView: View {
     init(editing: TaskItem? = nil) {
         if let e = editing {
             _draft = State(initialValue: e)
+            _showMore = State(initialValue: true)
             _useCustom = State(initialValue: e.intervalMinutes > 0 &&
                                ![1, 2, 3, 5, 10, 15, 20, 30, 60].contains(e.intervalMinutes))
             _customInterval = State(initialValue: e.intervalMinutes > 0 ? String(e.intervalMinutes) : "")
@@ -79,7 +84,8 @@ struct AddTaskView: View {
                 }
 
                 // 两种任务形式：做的（周期型）/ 抢的（抢购型）。
-                // 决定下面「重复」和「抢购」两段怎么展示。
+                // 决定「重复」和「抢购」两段怎么展示 —— 所以它单独留在主表单，
+                // 只把「间隔 / 结束时间」这些低频项收进「更多选项」。
                 Section(header: Text("任务形式"), footer: Text(kindFooter)) {
                     Picker("任务形式", selection: $draft.kind) {
                         ForEach(TaskKind.allCases) { k in
@@ -120,48 +126,61 @@ struct AddTaskView: View {
                         .padding(.vertical, 2)
                     }
 
-                    // 清单结束时间：这条清单 / 活动的终点。
-                    // 设了之后到点自动完成归档、催办不再越过它。
-                    Toggle(isOn: endDateToggle) {
-                        Text("清单结束时间")
-                    }
-
-                    if draft.endDate != nil {
-                        DatePicker(
-                            "结束时间",
-                            selection: endDateBinding,
-                            in: draft.dueDate...,
-                            displayedComponents: [.date, .hourAndMinute]
-                        )
-                        .environment(\.locale, Locale(identifier: "zh_CN"))
-
-                        ScrollView(.horizontal, showsIndicators: false) {
-                            HStack(spacing: 8) {
-                                quickEnd("7 天后", Date().addingTimeInterval(7 * 86400))
-                                quickEnd("30 天后", Date().addingTimeInterval(30 * 86400))
-                                quickEnd("3 个月后", Date().addingTimeInterval(90 * 86400))
-                                quickEnd("本月底", endOfMonth())
+                    // 新建时表单太长是最大的抱怨：提醒时间是必填的，
+                    // 间隔 / 结束时间都有合理默认，收进「更多选项」后
+                    // 主表单只剩三段，一屏能看完。
+                    DisclosureGroup(isExpanded: $showMore) {
+                        Picker("提醒间隔", selection: intervalBinding) {
+                            Text("跟随默认（\(store.settings.defaultIntervalMinutes) 分钟）").tag(0)
+                            ForEach(presetIntervals, id: \.self) { m in
+                                Text("每 \(m) 分钟").tag(m)
                             }
-                            .padding(.vertical, 2)
+                            Text("自定义").tag(-1)
                         }
-                    }
-                }
 
-                Section(header: Text("没完成就多久催一次"),
-                        footer: Text("任务到期后会先响一次，之后每隔这个间隔再催，直到你点「完成」。")) {
-                    Picker("提醒间隔", selection: intervalBinding) {
-                        Text("跟随默认（\(store.settings.defaultIntervalMinutes) 分钟）").tag(0)
-                        ForEach(presetIntervals, id: \.self) { m in
-                            Text("每 \(m) 分钟").tag(m)
+                        if useCustom {
+                            HStack {
+                                TextField("间隔分钟数", text: $customInterval)
+                                    .keyboardType(.numberPad)
+                                Text("分钟").foregroundColor(.secondary)
+                            }
                         }
-                        Text("自定义").tag(-1)
-                    }
 
-                    if useCustom {
-                        HStack {
-                            TextField("间隔分钟数", text: $customInterval)
-                                .keyboardType(.numberPad)
-                            Text("分钟").foregroundColor(.secondary)
+                        Text("任务到期后会先响一次，之后每隔这个间隔再催，直到你点「完成」。")
+                            .font(.app(12))
+                            .foregroundColor(.secondary)
+
+                        // 清单结束时间：这条清单 / 活动的终点。
+                        // 设了之后到点自动完成归档、催办不再越过它。
+                        Toggle(isOn: endDateToggle) {
+                            Text("清单结束时间")
+                        }
+
+                        if draft.endDate != nil {
+                            DatePicker(
+                                "结束时间",
+                                selection: endDateBinding,
+                                in: draft.dueDate...,
+                                displayedComponents: [.date, .hourAndMinute]
+                            )
+                            .environment(\.locale, Locale(identifier: "zh_CN"))
+
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    quickEnd("7 天后", Date().addingTimeInterval(7 * 86400))
+                                    quickEnd("30 天后", Date().addingTimeInterval(30 * 86400))
+                                    quickEnd("3 个月后", Date().addingTimeInterval(90 * 86400))
+                                    quickEnd("本月底", endOfMonth())
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("更多选项")
+                            Text("提醒间隔 · 清单结束时间")
+                                .font(.app(12))
+                                .foregroundColor(.secondary)
                         }
                     }
                 }
@@ -239,6 +258,16 @@ struct AddTaskView: View {
             }
         }
         .navigationViewStyle(.stack)
+        .alert("提醒时间已经过去了", isPresented: $showPostponeAlert) {
+            Button("顺延到 1 分钟后并保存") {
+                draft.dueDate = Date().addingTimeInterval(60)
+                draft.snoozeUntil = nil
+                performSave()
+            }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("可以顺延到 1 分钟后立即开始催办，或者先回去把时间改好再保存。")
+        }
         .sheet(item: $photoSource) { src in
             ImagePicker(sourceType: src == .camera ? .camera : .photoLibrary) { img in
                 photoSource = nil
@@ -753,7 +782,16 @@ struct AddTaskView: View {
         )
     }
 
+    /// 保存入口：提醒时间已过去时先问一声，不再默默顺延
     private func save() {
+        if draft.dueDate < Date().addingTimeInterval(-60) && !draft.isDone {
+            showPostponeAlert = true
+            return
+        }
+        performSave()
+    }
+
+    private func performSave() {
         var t = draft
         t.title = t.title.trimmingCharacters(in: .whitespacesAndNewlines)
         t.note = t.note.trimmingCharacters(in: .whitespacesAndNewlines)

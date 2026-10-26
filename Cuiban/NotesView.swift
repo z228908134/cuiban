@@ -239,14 +239,14 @@ struct NotesView: View {
             } label: {
                 noteSwipeIcon("trash")
             }
-            .tint(Color(red: 0.90, green: 0.23, blue: 0.22))
+            .tint(Palette.deleteRed)
 
             Button {
                 editing = n
             } label: {
                 noteSwipeIcon("square.and.pencil")
             }
-            .tint(Color(red: 0.19, green: 0.47, blue: 0.96))
+            .tint(Palette.actionBlue)
         }
     }
 

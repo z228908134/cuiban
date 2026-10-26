@@ -364,10 +364,10 @@ struct RechargeListView: View {
     }
 }
 
-/// 利润的红：和优惠券的「已出利润」同一个色
-let rechargeProfitTint = Color(red: 0.85, green: 0.20, blue: 0.16)
-/// 已使用 / 已完成的那种青绿
-let rechargeDoneTint = Color(red: 0.05, green: 0.43, blue: 0.34)
+/// 利润的红：和优惠券的「已出利润」同一个色（统一收在 Palette）
+let rechargeProfitTint = Palette.profitRed
+/// 已使用 / 已完成的那种青绿（同 TaskListView.hitTint / Palette.hitGreen）
+let rechargeDoneTint = Palette.hitGreen
 
 // MARK: - 平台详情（这个平台下的购买记录）
 
