@@ -129,6 +129,8 @@ struct NotesView: View {
     @State private var showingAdd = false
     @State private var editing: NoteItem? = nil
     @State private var query = ""
+    /// 搜索条：平时收起，下拉列表才露出来
+    @StateObject private var pull = PullReveal()
 
     var body: some View {
         // 排序只算一次。原来 ForEach 里直接写 noteStore.sorted，
@@ -141,38 +143,45 @@ struct NotesView: View {
                 || n.body.localizedCaseInsensitiveContains(q)
         }
         return NavigationView {
-            Group {
-                if noteStore.notes.isEmpty {
-                    emptyHint
-                } else {
-                    List {
-                        ForEach(items) { n in
-                            row(n)
-                        }
-                        .onDelete { idx in
-                            noteStore.delete(ids: idx.map { items[$0].id })
-                        }
-                    }
-                    .listStyle(.insetGrouped)
-                    .pullToRevealSearch()
+            VStack(spacing: 0) {
+                if pull.shown {
+                    PullSearchBar(query: $query, prompt: "搜索笔记",
+                                  onFocusChange: { pull.locked = $0 },
+                                  onCancel: { pull.hide() })
+                        .transition(.move(edge: .top).combined(with: .opacity))
                 }
-            }
-            .navigationTitle("笔记")
-            // .automatic = 平时收起不占位置，下拉才露出搜索框（用户要的就是这个）
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索笔记")
-            .navigationBarTitleDisplayMode(.inline)
-            .overlay(alignment: .bottomTrailing) {
-                FabButton { showingAdd = true }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 24)
-            }
-            .sheet(isPresented: $showingAdd) {
-                NoteEditorView(note: nil)
-                    .environmentObject(noteStore)
-            }
-            .sheet(item: $editing) { n in
-                NoteEditorView(note: n)
-                    .environmentObject(noteStore)
+
+                Group {
+                    if noteStore.notes.isEmpty {
+                        emptyHint
+                    } else {
+                        List {
+                            ForEach(items) { n in
+                                row(n)
+                            }
+                            .onDelete { idx in
+                                noteStore.delete(ids: idx.map { items[$0].id })
+                            }
+                        }
+                        .listStyle(.insetGrouped)
+                        .pullToRevealSearch()
+                    }
+                }
+                .navigationTitle("笔记")
+                .navigationBarTitleDisplayMode(.inline)
+                .overlay(alignment: .bottomTrailing) {
+                    FabButton { showingAdd = true }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 24)
+                }
+                .sheet(isPresented: $showingAdd) {
+                    NoteEditorView(note: nil)
+                        .environmentObject(noteStore)
+                }
+                .sheet(item: $editing) { n in
+                    NoteEditorView(note: n)
+                        .environmentObject(noteStore)
+                }
             }
         }
         .navigationViewStyle(.stack)
@@ -250,6 +259,8 @@ struct NotesView: View {
             }
             .tint(Palette.actionBlue)
         }
+        // 探针：接上所在列表的滚动视图，下拉到一定距离才把搜索条请出来
+        .background(ScrollProbe(reveal: pull))
     }
 
     /// 左滑按钮里的白色图标 + 圆形半透明底（与清单页同一规格）

@@ -14,6 +14,8 @@ struct TaskListView: View {
     @State private var selecting = false
     @State private var selected: Set<String> = []
     @State private var confirmBatchDelete = false
+    /// 搜索条：平时收起，下拉列表才露出来（系统 .searchable 在顶部是常驻的，做不到）
+    @StateObject private var pull = PullReveal()
 
     /// 搜索过滤：标题或备注命中都算；空白搜索词直接放行
     private func match(_ t: TaskItem) -> Bool {
@@ -33,137 +35,143 @@ struct TaskListView: View {
         let finished = store.finished.filter(match)
 
         return NavigationView {
-            List {
-                if !overdue.isEmpty {
+            VStack(spacing: 0) {
+                if pull.shown {
+                    PullSearchBar(query: $query, prompt: "搜索标题 / 备注",
+                                  onFocusChange: { pull.locked = $0 },
+                                  onCancel: { pull.hide() })
+                        .transition(.move(edge: .top).combined(with: .opacity))
+                }
+
+                List {
+                    if !overdue.isEmpty {
+                        Section {
+                            ForEach(overdue) { t in
+                                row(t)
+                            }
+                        } header: {
+                            Label("逾期未完成 · \(overdue.count)", systemImage: "exclamationmark.triangle.fill")
+                                .foregroundColor(.red)
+                        }
+                    }
+
                     Section {
-                        ForEach(overdue) { t in
-                            row(t)
+                        if upcoming.isEmpty && overdue.isEmpty && hit.isEmpty {
+                            emptyHint
+                        } else {
+                            ForEach(upcoming) { t in
+                                row(t)
+                            }
                         }
                     } header: {
-                        Label("逾期未完成 · \(overdue.count)", systemImage: "exclamationmark.triangle.fill")
-                            .foregroundColor(.red)
+                        Text("待办")
                     }
-                }
 
-                Section {
-                    if upcoming.isEmpty && overdue.isEmpty && hit.isEmpty {
-                        emptyHint
-                    } else {
-                        ForEach(upcoming) { t in
-                            row(t)
+                    // 已抢到：机会已经拿下，但活动还在继续，改成每天提醒。
+                    // 单独一组，既不混进「逾期」（会造成焦虑），也不会掉出列表。
+                    if !hit.isEmpty {
+                        Section {
+                            ForEach(hit) { t in
+                                row(t)
+                            }
+                        } header: {
+                            Label("已抢到 · 每天提醒 · \(hit.count)", systemImage: "checkmark.seal.fill")
+                                .foregroundColor(Palette.hitGreen)
                         }
                     }
-                } header: {
-                    Text("待办")
-                }
 
-                // 已抢到：机会已经拿下，但活动还在继续，改成每天提醒。
-                // 单独一组，既不混进「逾期」（会造成焦虑），也不会掉出列表。
-                if !hit.isEmpty {
-                    Section {
-                        ForEach(hit) { t in
-                            row(t)
+                    if !finished.isEmpty {
+                        Section {
+                            ForEach(showFinished ? finished : Array(finished.prefix(2))) { t in
+                                row(t)
+                            }
+                            Button {
+                                showFinished.toggle()
+                            } label: {
+                                Text(showFinished ? "收起已完成" : "展开已完成 (\(finished.count))")
+                                    .font(.app(13))
+                            }
+                        } header: {
+                            Text("已完成")
                         }
-                    } header: {
-                        Label("已抢到 · 每天提醒 · \(hit.count)", systemImage: "checkmark.seal.fill")
-                            .foregroundColor(Palette.hitGreen)
                     }
                 }
-
-                if !finished.isEmpty {
-                    Section {
-                        ForEach(showFinished ? finished : Array(finished.prefix(2))) { t in
-                            row(t)
+                .listStyle(.insetGrouped)
+                .pullToRevealSearch()
+                .navigationTitle("催办清单")
+                // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .navigationBarLeading) {
+                        if selecting {
+                            Button(allSelected ? "全不选" : "全选") {
+                                if allSelected { selected = [] } else { selected = Set(allVisibleIds) }
+                            }
                         }
-                        Button {
-                            showFinished.toggle()
-                        } label: {
-                            Text(showFinished ? "收起已完成" : "展开已完成 (\(finished.count))")
+                    }
+                    ToolbarItem(placement: .navigationBarTrailing) {
+                        Button(selecting ? "完成" : "多选") {
+                            selecting.toggle()
+                            if !selecting { selected = [] }
+                        }
+                    }
+                }
+                .confirmationDialog(
+                    "删除选中的 \(selected.count) 条任务？",
+                    isPresented: $confirmBatchDelete,
+                    titleVisibility: .visible
+                ) {
+                    Button("删除 \(selected.count) 条", role: .destructive) {
+                        store.deleteMany(ids: Array(selected))
+                        selected = []
+                    }
+                    Button("取消", role: .cancel) {}
+                } message: {
+                    Text("这些任务及其照片会被直接删除，无法恢复。")
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    FabButton { showingAdd = true }
+                        .padding(.trailing, 20)
+                        .padding(.bottom, 24)
+                }
+                .overlay(alignment: .bottom) {
+                    if let title = deletedTitle {
+                        HStack(spacing: 14) {
+                            Text("已删除「\(title)」")
                                 .font(.app(13))
+                                .foregroundColor(.white)
+                                .lineLimit(1)
+                            Button("撤销") {
+                                // 照片还在撤销窗口里，原位放回即可
+                                store.undoDelete()
+                                deletedTitle = nil
+                            }
+                            .font(.app(14, weight: .semibold))
+                            .foregroundColor(Palette.actionBlue)
                         }
-                    } header: {
-                        Text("已完成")
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 11)
+                        .background(Capsule().fill(Color(UIColor.darkGray)))
+                        .padding(.bottom, 64)
+                        .transition(.move(edge: .bottom).combined(with: .opacity))
                     }
                 }
-            }
-            .listStyle(.insetGrouped)
-            .pullToRevealSearch()
-            // .automatic = 系统原生行为：平时收起不占位置，下拉才露出搜索框。
-            // 不要改成 .always（会常驻占一行，用户明确不要）。
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索标题 / 备注")
-            .navigationTitle("催办清单")
-            // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    if selecting {
-                        Button(allSelected ? "全不选" : "全选") {
-                            if allSelected { selected = [] } else { selected = Set(allVisibleIds) }
-                        }
+                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: deletedTitle)
+                .overlay(alignment: .bottom) {
+                    if selecting && !selected.isEmpty {
+                        batchBar
                     }
                 }
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button(selecting ? "完成" : "多选") {
-                        selecting.toggle()
-                        if !selecting { selected = [] }
-                    }
+                .animation(.spring(response: 0.3, dampingFraction: 0.85), value: selected)
+                .sheet(isPresented: $showingAdd) {
+                    AddTaskView()
                 }
-            }
-            .confirmationDialog(
-                "删除选中的 \(selected.count) 条任务？",
-                isPresented: $confirmBatchDelete,
-                titleVisibility: .visible
-            ) {
-                Button("删除 \(selected.count) 条", role: .destructive) {
-                    store.deleteMany(ids: Array(selected))
-                    selected = []
+                .sheet(item: $editing) { t in
+                    AddTaskView(editing: t)
                 }
-                Button("取消", role: .cancel) {}
-            } message: {
-                Text("这些任务及其照片会被直接删除，无法恢复。")
-            }
-            .overlay(alignment: .bottomTrailing) {
-                FabButton { showingAdd = true }
-                    .padding(.trailing, 20)
-                    .padding(.bottom, 24)
-            }
-            .overlay(alignment: .bottom) {
-                if let title = deletedTitle {
-                    HStack(spacing: 14) {
-                        Text("已删除「\(title)」")
-                            .font(.app(13))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                        Button("撤销") {
-                            // 照片还在撤销窗口里，原位放回即可
-                            store.undoDelete()
-                            deletedTitle = nil
-                        }
-                        .font(.app(14, weight: .semibold))
-                        .foregroundColor(Palette.actionBlue)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 11)
-                    .background(Capsule().fill(Color(UIColor.darkGray)))
-                    .padding(.bottom, 64)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                .sheet(item: $detail) { t in
+                    TaskDetailView(task: t)
                 }
-            }
-            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: deletedTitle)
-            .overlay(alignment: .bottom) {
-                if selecting && !selected.isEmpty {
-                    batchBar
-                }
-            }
-            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: selected)
-            .sheet(isPresented: $showingAdd) {
-                AddTaskView()
-            }
-            .sheet(item: $editing) { t in
-                AddTaskView(editing: t)
-            }
-            .sheet(item: $detail) { t in
-                TaskDetailView(task: t)
             }
         }
         .navigationViewStyle(.stack)
@@ -182,6 +190,7 @@ struct TaskListView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(ScrollProbe(reveal: pull))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
     }
@@ -368,6 +377,8 @@ struct TaskListView: View {
             .tint(Palette.actionBlue)
             }
         }
+        // 探针：把所在列表的滚动视图接上，用来算「下拉了多少」（只读 offset，不抢手势）
+        .background(ScrollProbe(reveal: pull))
     }
 
     /// 左滑按钮里的图标。底色交给系统按 .tint 上色，
