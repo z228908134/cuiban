@@ -38,7 +38,7 @@ struct TaskListView: View {
             VStack(spacing: 0) {
                 if pull.shown {
                     PullSearchBar(query: $query, prompt: "搜索标题 / 备注",
-                                  onFocusChange: { pull.locked = $0 },
+                                  onFocusChange: { f in pull.locked = f || !query.isEmpty },
                                   onCancel: { pull.hide() })
                         .transition(.move(edge: .top).combined(with: .opacity))
                 }

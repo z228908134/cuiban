@@ -36,8 +36,8 @@ targets:
           - CFBundleURLName: com.cuiban.app
             CFBundleURLSchemes:
               - cuiban
-        CFBundleShortVersionString: "1.23.4"
-        CFBundleVersion: "88"
+        CFBundleShortVersionString: "1.23.5"
+        CFBundleVersion: "89"
         LSRequiresIPhoneOS: true
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities:
@@ -62,8 +62,8 @@ targets:
         PRODUCT_NAME: Cuiban
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "88"
-        MARKETING_VERSION: "1.23.4"
+        CURRENT_PROJECT_VERSION: "89"
+        MARKETING_VERSION: "1.23.5"
         # 临界警报（强提醒）权限声明，见 Cuiban/Cuiban.entitlements
         CODE_SIGN_ENTITLEMENTS: Cuiban/Cuiban.entitlements
 
@@ -78,8 +78,8 @@ targets:
       path: Widget/Info.plist
       properties:
         # 和主 App 版本保持一致（不写的话 XcodeGen 默认 1.0）
-        CFBundleShortVersionString: "1.23.4"
-        CFBundleVersion: "88"
+        CFBundleShortVersionString: "1.23.5"
+        CFBundleVersion: "89"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
@@ -87,7 +87,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.cuiban.app.widget
         PRODUCT_NAME: CuibanWidget
         TARGETED_DEVICE_FAMILY: "1"
-        CURRENT_PROJECT_VERSION: "88"
-        MARKETING_VERSION: "1.23.4"
+        CURRENT_PROJECT_VERSION: "89"
+        MARKETING_VERSION: "1.23.5"
         CODE_SIGN_ENTITLEMENTS: Widget/Widget.entitlements
         SKIP_INSTALL: YES

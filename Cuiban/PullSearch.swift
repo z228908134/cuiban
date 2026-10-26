@@ -89,6 +89,16 @@ struct ScrollProbe: UIViewRepresentable {
         override func didMoveToWindow() {
             super.didMoveToWindow()
             guard window != nil else { return }
+            if !tryAttach() {
+                // 极少数情况下装配顺序还没到 cell 那一层，下一帧再试一次
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+                    _ = self?.tryAttach()
+                }
+            }
+        }
+
+        @discardableResult
+        func tryAttach() -> Bool {
             var v: UIView? = superview
             while let cur = v {
                 if let s = cur as? UIScrollView {
@@ -97,10 +107,11 @@ struct ScrollProbe: UIViewRepresentable {
                         reveal?.attach(s)
                     }
                     reassertBounce()
-                    return
+                    return true
                 }
                 v = cur.superview
             }
+            return false
         }
 
         /// 内容不满一屏也要能下拉，否则「下拉出搜索框」没有行程
