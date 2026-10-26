@@ -24,6 +24,22 @@ func human(_ seconds: TimeInterval) -> String {
     return "\(h / 24) 天 \(h % 24) 小时"
 }
 
+extension View {
+    /// 让内容不满一屏的列表也能下拉回弹。
+    ///
+    /// 搜索框用的是「自动隐藏」式（下拉才露出来，平时不占位置）；
+    /// 但列表短到不能滚动时根本没有下拉动作，搜索框就永远出不来 ——
+    /// iOS 16.4 起可以强制 always bounce，把这一下拉补上。
+    @ViewBuilder
+    func pullToRevealSearch() -> some View {
+        if #available(iOS 16.4, *) {
+            scrollBounceBehavior(.always, axes: .vertical)
+        } else {
+            self
+        }
+    }
+}
+
 let brandColor = Color(red: 0.97, green: 0.33, blue: 0.18)
 let alarmRed = Color(red: 0.76, green: 0.16, blue: 0.10)
 

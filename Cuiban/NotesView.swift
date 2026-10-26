@@ -154,10 +154,12 @@ struct NotesView: View {
                         }
                     }
                     .listStyle(.insetGrouped)
+                    .pullToRevealSearch()
                 }
             }
             .navigationTitle("笔记")
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索笔记")
+            // .automatic = 平时收起不占位置，下拉才露出搜索框（用户要的就是这个）
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索笔记")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottomTrailing) {
                 FabButton { showingAdd = true }

@@ -87,7 +87,10 @@ struct TaskListView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索标题 / 备注")
+            .pullToRevealSearch()
+            // .automatic = 系统原生行为：平时收起不占位置，下拉才露出搜索框。
+            // 不要改成 .always（会常驻占一行，用户明确不要）。
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索标题 / 备注")
             .navigationTitle("催办清单")
             // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
             .navigationBarTitleDisplayMode(.inline)
