@@ -252,6 +252,13 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
         let taskId = info["taskId"] as? String
         DispatchQueue.main.async {
+            // 不带 taskId 的通知（设置页的「测试一下」）没有存货可言，
+            // 照常展示。之前走到 vetted(nil) 被当存货吞了——前台点测试
+            // 5 秒后永远没反应，就是这个原因。
+            guard let taskId = taskId else {
+                completionHandler([.banner, .list, .sound])
+                return
+            }
             guard let vet = AppDelegate.vetted(taskId), vet.live else {
                 // 存货或已失效：静默吞掉，顺手清出通知中心
                 center.removeDeliveredNotifications(withIdentifiers: [reqId])

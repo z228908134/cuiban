@@ -47,7 +47,8 @@ enum NotificationScheduler {
     }
 
     static func requestAuthorization(completion: ((Bool) -> Void)? = nil) {
-        center().requestAuthorization(options: [.alert, .sound, .badge]) { granted, _ in
+        // .timeSensitive：声明过才能发「时间敏感」通知穿透专注模式
+        center().requestAuthorization(options: [.alert, .sound, .badge, .timeSensitive]) { granted, _ in
             DispatchQueue.main.async { completion?(granted) }
         }
     }
@@ -62,10 +63,24 @@ enum NotificationScheduler {
         return UNNotificationSound(named: name)
     }
 
-    /// 中断级别：强提醒用 .critical（越过专注模式和勿扰，锁屏直接亮屏响铃），
-    /// 否则用 .timeSensitive（能在专注模式下挤出来的最高普通档）。
+    /// 「强提醒」真正生效的前提：开关开了 + 系统真给了临界警报权限。
+    /// 未签名安装（TrollStore）拿不到 critical-alerts entitlement，
+    /// criticalAlertSetting 会是 .disabled —— 此时还硬发 .critical 通知，
+    /// iOS 会把整条通知静默丢弃（锁屏只有 app 自己的声音、没有横幅），
+    /// 所以必须降级为时间敏感。
+    static func effectiveCritical(_ settings: AppSettings) -> Bool {
+        settings.criticalAlerts && TaskStore.shared.criticalAuthorized
+    }
+
+    /// 中断级别：真有临界警报权限才用 .critical（越过专注模式和勿扰，
+    /// 锁屏直接亮屏响铃），否则用 .timeSensitive（普通档里最高，能穿透专注模式）。
     static func interruptionLevel(for settings: AppSettings) -> UNNotificationInterruptionLevel {
-        settings.criticalAlerts ? .critical : .timeSensitive
+        effectiveCritical(settings) ? .critical : .timeSensitive
+    }
+
+    /// 按设置取铃声（内部先判断临界警报权限是否真的生效）
+    static func soundName(for settings: AppSettings) -> UNNotificationSound {
+        soundName(critical: effectiveCritical(settings))
     }
 
     // MARK: 重排（去抖 + 后台）
@@ -316,7 +331,7 @@ enum NotificationScheduler {
             content.threadIdentifier = task.id
             content.userInfo = ["taskId": task.id]
             if settings.soundEnabled {
-                content.sound = soundName(critical: settings.criticalAlerts)
+                content.sound = soundName(for: settings)
             }
             content.interruptionLevel = interruptionLevel(for: settings)
 
@@ -376,7 +391,7 @@ enum NotificationScheduler {
         content.threadIdentifier = task.id
         content.userInfo = ["taskId": task.id]
         if settings.soundEnabled {
-            content.sound = soundName(critical: settings.criticalAlerts)
+            content.sound = soundName(for: settings)
         }
         content.interruptionLevel = interruptionLevel(for: settings)
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: 2, repeats: false)
@@ -391,12 +406,27 @@ enum NotificationScheduler {
     // MARK: 测试
 
     static func testFire(in seconds: TimeInterval = 5) {
+        // 先查一次最新的通知设置再构造内容：通知的铃声/级别在 add() 那一刻
+        // 就定死了，5 秒后才触发，所以权限状态必须现查，不能用缓存的旧值。
+        center().getNotificationSettings { s in
+            DispatchQueue.main.async {
+                TaskStore.shared.criticalAuthorized = (s.criticalAlertSetting == .enabled)
+                testFireNow(in: seconds, settings: TaskStore.shared.settings)
+            }
+        }
+    }
+
+    private static func testFireNow(in seconds: TimeInterval, settings: AppSettings) {
         let content = UNMutableNotificationContent()
         content.title = "⏰ 测试提醒"
         content.body = "看到通知并听到警报声，说明催办已经准备好了。"
-        content.sound = soundName(critical: TaskStore.shared.settings.criticalAlerts)
-        content.interruptionLevel = interruptionLevel(for: TaskStore.shared.settings)
+        content.sound = soundName(for: settings)
+        content.interruptionLevel = interruptionLevel(for: settings)
+        // 不带 taskId：前台时 willPresent 要靠这一点放行（别被当存货吞掉）。
+        // identifier 带时间戳：固定 id 会被下一次重排当垃圾清掉（重排按 cb. 前缀
+        // 清 pending），点了测试之后碰上一次重排，5 秒后的响铃就凭空消失了。
+        let ident = "\(idPrefix)test.\(Int(Date().timeIntervalSince1970))"
         let trigger = UNTimeIntervalNotificationTrigger(timeInterval: max(1, seconds), repeats: false)
-        center().add(UNNotificationRequest(identifier: "\(idPrefix)test", content: content, trigger: trigger))
+        center().add(UNNotificationRequest(identifier: ident, content: content, trigger: trigger))
     }
 }

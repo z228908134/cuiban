@@ -157,7 +157,7 @@ struct NotesView: View {
                 }
             }
             .navigationTitle("笔记")
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索笔记")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索笔记")
             .navigationBarTitleDisplayMode(.inline)
             .overlay(alignment: .bottomTrailing) {
                 FabButton { showingAdd = true }

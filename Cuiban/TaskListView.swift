@@ -87,7 +87,7 @@ struct TaskListView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .automatic), prompt: "搜索标题 / 备注")
+            .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索标题 / 备注")
             .navigationTitle("催办清单")
             // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
             .navigationBarTitleDisplayMode(.inline)

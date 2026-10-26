@@ -437,6 +437,11 @@ final class TaskStore: ObservableObject {
     @Published var settings = AppSettings()
     @Published var authStatus: UNAuthorizationStatus = .notDetermined
     @Published var pendingNotificationCount: Int = 0
+    /// 系统是否真的给了「临界警报」权限。
+    /// 「强提醒」开关只是意愿；未签名安装（TrollStore）时 entitlement 不被认可，
+    /// criticalAlertSetting 会是 .disabled —— 这种情况下还硬发 .critical 通知，
+    /// iOS 会把它静默丢弃（锁屏连横幅都没有），必须降级为时间敏感。
+    @Published var criticalAuthorized = false
 
     private let tasksFile: URL
     private let settingsFile: URL
@@ -917,14 +922,19 @@ final class TaskStore: ObservableObject {
     // MARK: 通知授权
 
     func requestAuth() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in
+        // .timeSensitive：iOS 15 起「时间敏感」要在授权请求里声明过，
+        // 之后发的 .timeSensitive 通知才能穿透专注模式；没声明会被静默降档。
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge, .timeSensitive]) { _, _ in
             DispatchQueue.main.async { self.refreshAuth() }
         }
     }
 
     func refreshAuth() {
         UNUserNotificationCenter.current().getNotificationSettings { s in
-            DispatchQueue.main.async { self.authStatus = s.authorizationStatus }
+            DispatchQueue.main.async {
+                self.authStatus = s.authorizationStatus
+                self.criticalAuthorized = (s.criticalAlertSetting == .enabled)
+            }
         }
     }
 

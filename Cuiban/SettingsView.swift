@@ -111,6 +111,13 @@ private let intervals = [1, 2, 3, 5, 10, 15, 20, 30, 60]
                     }
                     Toggle("提示音", isOn: soundBinding)
                     Toggle("强提醒（越过勿扰/专注模式）", isOn: criticalBinding)
+                    if store.settings.criticalAlerts && !store.criticalAuthorized {
+                        // 开了开关但系统没真给临界警报权限（未签名安装的常态）：
+                        // 实际会按「时间敏感」发，提前说清楚，免得以为强提没生效
+                        Text("这台手机拿不到系统「临界警报」权限（未签名安装的常态），实际按「时间敏感」提醒：能穿透专注模式，但静音开关拨到静音时不响铃。")
+                            .font(.app(12))
+                            .foregroundColor(.orange)
+                    }
                 }
 
                 // MARK: 优惠券提醒
