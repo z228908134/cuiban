@@ -71,6 +71,9 @@ targets:
     info:
       path: Widget/Info.plist
       properties:
+        # 和主 App 版本保持一致（不写的话 XcodeGen 默认 1.0）
+        CFBundleShortVersionString: "1.22.0"
+        CFBundleVersion: "83"
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
