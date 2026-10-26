@@ -491,6 +491,8 @@ final class TaskStore: ObservableObject {
     // autoSyncIfNeeded。原来会把网络 IO 拉回主线程。
         DispatchQueue.main.async {
    NotificationCenter.default.post(name: .cuibanDataChanged, object: nil)
+            // 同步一份「接下来要催什么」给桌面/锁屏小组件（内部限流 45 秒）
+            WidgetSync.pushThrottled(tasks: t)
     }
     }
 
@@ -838,6 +840,33 @@ final class TaskStore: ObservableObject {
         save()
         AlarmCenter.shared.dismiss(id: id)
         NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
+    }
+
+    // MARK: 批量操作（清单多选）
+
+    /// 批量完成：逐条走 complete()（保留配额/抢到状态等完整逻辑），
+    /// 数量都不大，逐条落盘的代价可接受
+    func completeMany(ids: [String]) {
+        for id in ids { complete(id: id) }
+    }
+
+    /// 批量延后：统一延 settings.snoozeMinutes 分钟
+    func snoozeMany(ids: [String]) {
+        for id in ids { snooze(id: id) }
+    }
+
+    /// 批量删除：多选场景不进撤销窗口（UI 侧有确认弹窗兜底），
+    /// 照片立即清理，通知逐条撤掉
+    func deleteMany(ids: [String]) {
+        let idSet = Set(ids)
+        guard !idSet.isEmpty else { return }
+        let photos = tasks.filter { idSet.contains($0.id) }.flatMap { $0.photos }
+        tasks.removeAll { idSet.contains($0.id) }
+        save()
+        AlarmCenter.shared.dismiss()
+        for id in ids { NotificationScheduler.removeAll(for: id) }
+        NotificationScheduler.rescheduleAll(tasks: tasks, settings: settings, catchUp: true)
+        if !photos.isEmpty { AttachmentStore.delete(photos) }
     }
 
     /// 记一次催促

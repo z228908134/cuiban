@@ -8,5 +8,11 @@
 	     普通时效性通知，功能不炸、只是没那么响。 -->
 	<key>com.apple.developer.usernotifications.critical-alerts</key>
 	<true/>
+	<!-- 小组件数据桥：主 App 与小组件扩展通过这个 App Group
+	     共享「接下来要催什么」的快照（见 WidgetSync.swift）。 -->
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.cuiban.app</string>
+	</array>
 </dict>
 </plist>

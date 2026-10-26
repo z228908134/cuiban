@@ -10,6 +10,10 @@ struct TaskListView: View {
     /// 删除后的撤销提示条：非 nil 时显示，5.5 秒后自动收起
     @State private var deletedTitle: String? = nil
     @State private var toastToken = UUID()
+    // 多选模式：批量完成 / 延后 / 删除
+    @State private var selecting = false
+    @State private var selected: Set<String> = []
+    @State private var confirmBatchDelete = false
 
     /// 搜索过滤：标题或备注命中都算；空白搜索词直接放行
     private func match(_ t: TaskItem) -> Bool {
@@ -87,6 +91,34 @@ struct TaskListView: View {
             .navigationTitle("催办清单")
             // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    if selecting {
+                        Button(allSelected ? "全不选" : "全选") {
+                            if allSelected { selected = [] } else { selected = Set(allVisibleIds) }
+                        }
+                    }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button(selecting ? "完成" : "多选") {
+                        selecting.toggle()
+                        if !selecting { selected = [] }
+                    }
+                }
+            }
+            .confirmationDialog(
+                "删除选中的 \(selected.count) 条任务？",
+                isPresented: $confirmBatchDelete,
+                titleVisibility: .visible
+            ) {
+                Button("删除 \(selected.count) 条", role: .destructive) {
+                    store.deleteMany(ids: Array(selected))
+                    selected = []
+                }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("这些任务及其照片会被直接删除，无法恢复。")
+            }
             .overlay(alignment: .bottomTrailing) {
                 FabButton { showingAdd = true }
                     .padding(.trailing, 20)
@@ -115,6 +147,12 @@ struct TaskListView: View {
                 }
             }
             .animation(.spring(response: 0.3, dampingFraction: 0.85), value: deletedTitle)
+            .overlay(alignment: .bottom) {
+                if selecting && !selected.isEmpty {
+                    batchBar
+                }
+            }
+            .animation(.spring(response: 0.3, dampingFraction: 0.85), value: selected)
             .sheet(isPresented: $showingAdd) {
                 AddTaskView()
             }
@@ -145,17 +183,80 @@ struct TaskListView: View {
         .listRowSeparator(.hidden)
     }
 
+    // MARK: 多选
+
+    /// 可见（含搜索过滤后）的全部任务 id，给「全选」用
+    private var allVisibleIds: [String] {
+        [store.overdue, store.upcoming, store.hit, store.finished]
+            .flatMap { $0.filter(match) }
+            .map { $0.id }
+    }
+
+    private var allSelected: Bool {
+        !selected.isEmpty && selected.count == allVisibleIds.count
+    }
+
+    /// 底部批量操作条：完成 / 延后 / 删除
+    private var batchBar: some View {
+        HStack(spacing: 10) {
+            batchBtn("checkmark.circle.fill", "完成 \(selected.count)", Palette.hitGreen) {
+                store.completeMany(ids: Array(selected))
+                selected = []
+            }
+            batchBtn("alarm.fill", "延后", Palette.snoozeOrange) {
+                store.snoozeMany(ids: Array(selected))
+                selected = []
+            }
+            batchBtn("trash.fill", "删除", Palette.deleteRed) {
+                confirmBatchDelete = true
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 18)
+                .fill(Color(UIColor.secondarySystemGroupedBackground))
+                .shadow(color: .black.opacity(0.18), radius: 10, y: 3)
+        )
+        .padding(.horizontal, 16)
+        .padding(.bottom, 64)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
+
+    private func batchBtn(_ icon: String, _ label: String, _ tint: Color, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: icon).font(.app(13, weight: .semibold))
+                Text(label).font(.app(14, weight: .semibold))
+            }
+            .foregroundColor(.white)
+            .padding(.horizontal, 13)
+            .padding(.vertical, 9)
+            .background(Capsule().fill(tint))
+        }
+        .buttonStyle(.plain)
+    }
+
     @ViewBuilder
     private func row(_ t: TaskItem) -> some View {
         HStack(spacing: 12) {
-            Button {
-                if t.isDone { store.uncomplete(id: t.id) } else { store.complete(id: t.id) }
-            } label: {
-                Image(systemName: rowIcon(t))
+            if selecting {
+                // 多选模式：勾选圈替代完成圈，点行任意处都是勾选/取消
+                Image(systemName: selected.contains(t.id) ? "checkmark.circle.fill" : "circle")
                     .font(.app(22))
-                    .foregroundColor(rowIconColor(t))
+                    .foregroundColor(selected.contains(t.id)
+                                     ? Palette.actionBlue
+                                     : Color.secondary.opacity(0.6))
+            } else {
+                Button {
+                    if t.isDone { store.uncomplete(id: t.id) } else { store.complete(id: t.id) }
+                } label: {
+                    Image(systemName: rowIcon(t))
+                        .font(.app(22))
+                        .foregroundColor(rowIconColor(t))
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(t.title.isEmpty ? "（未命名）" : t.title)
@@ -207,8 +308,15 @@ struct TaskListView: View {
         }
         .padding(.vertical, 3)
         .contentShape(Rectangle())
-        .onTapGesture { detail = t }
+        .onTapGesture {
+            if selecting {
+                if selected.contains(t.id) { selected.remove(t.id) } else { selected.insert(t.id) }
+            } else {
+                detail = t
+            }
+        }
         .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+            if !selecting {
             // 蓝 / 橙 / 红三色，纯图标 + 圆形底。
             // 注意：不能给删除用 role: .destructive —— 系统会强制把 tint 覆盖成灰色，
             // 三个按钮就全灰了（之前就是这样）。所以一律普通 Button + 显式 .tint。
@@ -255,6 +363,7 @@ struct TaskListView: View {
                 swipeIcon("square.and.pencil")
             }
             .tint(Palette.actionBlue)
+            }
         }
     }
 
