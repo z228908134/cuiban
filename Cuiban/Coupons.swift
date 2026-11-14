@@ -676,8 +676,7 @@ struct CouponEditView: View {
                 }
 
                 Section(header: Text("备注")) {
-                    TextField("备注（选填）", text: $draft.note, axis: .vertical)
-                        .lineLimit(1...4)
+                    MultilineTextField(placeholder: "备注（选填）", text: $draft.note)
                 }
 
                 if !isNew {

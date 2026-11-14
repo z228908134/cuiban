@@ -247,7 +247,9 @@ if let at = cloudMeta.lastSyncAt {
                 NavigationLink {
                     WebDAVSettingsView()
                 } label: {
-                    Label("连接飞牛（WebDAV）", systemImage: "server.rack")
+                    Label("连接飞牛（WebDAV）",
+                          systemImage: Compat.symbol("server.rack",
+                                                     fallback: "externaldrive.connected.to.line.below"))
                 }
 
                 Button {

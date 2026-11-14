@@ -193,7 +193,7 @@ struct AlarmOverlay: View {
     }
 
     private var bellIcon: some View {
-        Image(systemName: "bell.and.waves.left.and.right.fill")
+        Image(systemName: Compat.symbol("bell.and.waves.left.and.right.fill", fallback: "bell.fill"))
             .font(.app(52))
             .foregroundColor(.white)
             .scaleEffect(pulsing ? 1.12 : 0.92)
