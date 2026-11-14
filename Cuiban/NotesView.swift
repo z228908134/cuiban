@@ -654,8 +654,7 @@ struct NoteEditorView: View {
                            on: Bool, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(label)
-                .font(.app(16, weight: bold || on ? .semibold : .regular))
-                .italic(italic)
+                .font(pillFont(bold: bold || on, italic: italic))
                 .underline(underline)
                 .strikethrough(strike)
                 .foregroundColor(on ? .white : .primary)
@@ -666,6 +665,15 @@ struct NoteEditorView: View {
                 )
         }
         .buttonStyle(.plain)
+    }
+
+    /// 胶囊的字体。
+    ///
+    /// `Text.italic(_ isActive:)` 是 iOS 16 才有的重载，iOS 15 只认无参的 `Text.italic()`；
+    /// 而 `Font.italic()` 从 iOS 13 就有，所以把斜体折进字体里构造，两条路都通。
+    private func pillFont(bold: Bool, italic: Bool) -> Font {
+        let base = Font.app(16, weight: bold ? .semibold : .regular)
+        return italic ? base.italic() : base
     }
 
     /// 右端 ∨：其余全部功能收进菜单（滴答同款折叠）

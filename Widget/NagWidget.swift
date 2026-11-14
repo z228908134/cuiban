@@ -231,7 +231,10 @@ private struct CircularView: View {
 
     var body: some View {
         ZStack {
-            AccessoryWidgetBackground()
+            // AccessoryWidgetBackground 是 iOS 16 的锁屏小组件背景，桌面家族用不到
+            if #available(iOSApplicationExtension 16.0, *) {
+                AccessoryWidgetBackground()
+            }
             VStack(spacing: 0) {
                 Image(systemName: "bell.fill")
                     .font(.system(size: 11))
@@ -258,13 +261,21 @@ struct NagWidgetEntryView: View {
 
     @ViewBuilder
     private var content: some View {
-        switch family {
-        case .systemSmall: SmallView(entry: entry)
-        case .systemMedium: MediumView(entry: entry)
-        case .accessoryInline: InlineView(entry: entry)
-        case .accessoryRectangular: RectangularView(entry: entry)
-        case .accessoryCircular: CircularView(entry: entry)
-        default: SmallView(entry: entry)
+        if #available(iOSApplicationExtension 16.0, *) {
+            switch family {
+            case .systemSmall: SmallView(entry: entry)
+            case .systemMedium: MediumView(entry: entry)
+            case .accessoryInline: InlineView(entry: entry)
+            case .accessoryRectangular: RectangularView(entry: entry)
+            case .accessoryCircular: CircularView(entry: entry)
+            default: SmallView(entry: entry)
+            }
+        } else {
+            // iOS 15 只有桌面小组件：锁屏 accessory 家族在 16 才有
+            switch family {
+            case .systemMedium: MediumView(entry: entry)
+            default: SmallView(entry: entry)
+            }
         }
     }
 }
@@ -276,10 +287,17 @@ struct NagWidget: Widget {
         }
         .configurationDisplayName("催办")
         .description("接下来要催的任务，桌面和锁屏一眼看到。")
-        .supportedFamilies([
-            .systemSmall, .systemMedium,
-            .accessoryInline, .accessoryRectangular, .accessoryCircular,
-        ])
+        .supportedFamilies(availableFamilies)
+    }
+
+    /// 锁屏 accessory 家族是 iOS 16 才有的；iOS 15 只报桌面这两种，
+    /// 否则系统会在「添加小组件」里列出一堆点了没反应的样式。
+    private var availableFamilies: [WidgetFamily] {
+        var families: [WidgetFamily] = [.systemSmall, .systemMedium]
+        if #available(iOSApplicationExtension 16.0, *) {
+            families += [.accessoryInline, .accessoryRectangular, .accessoryCircular]
+        }
+        return families
     }
 }
 
