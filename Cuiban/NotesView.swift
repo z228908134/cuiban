@@ -1053,7 +1053,7 @@ struct NoteBodyEditor: UIViewRepresentable {
         if let info = info, info.markLen > 0,
            lr.location + info.loc + info.markLen <= attr.length {
             attr.addAttributes([
-                .font: UIFont.app(20),
+                .font: UIFont.app(24),
                 .foregroundColor: UIColor.label
             ], range: NSRange(location: lr.location + info.loc, length: info.markLen))
             attr.addAttribute(.attachment,
@@ -1316,21 +1316,21 @@ struct NoteBodyEditor: UIViewRepresentable {
         private static func boxRect(tv: UITextView, markLoc: Int, markLen: Int) -> CGRect? {
             var rects: [CGRect] = []
             if let p0 = tv.position(from: tv.beginningOfDocument, offset: markLoc) {
-                // ⚠️ 两个系统 API 的坐标系不一样：
-                //   caretRect(for:) 给的是「内容坐标」（相对文档，不随 contentOffset 变）；
-                //   firstRect(for:) 给的是「视图坐标」（已经减去滚动偏移）。
-                // 之前直接把两者取并集，只要正文一滚动，并集就被 caretRect 拖偏一屏，
-                // 热区整个跑偏 —— 这就是「勾选框要点好几次才点中」的根因。
-                // 统一转成视图坐标（减 contentOffset）再参与计算，与 hitTest 的点同系。
-                var cr = tv.caretRect(for: p0)
-                cr.origin.x -= tv.contentOffset.x
-                cr.origin.y -= tv.contentOffset.y
-                rects.append(cr)
+                // firstRect 是视图坐标（文档保证、已含滚动偏移），最可靠，优先只用它；
+                // 取不到时才用 caretRect 兜底（它是内容坐标，要减 contentOffset）。
+                // 之前是两者取并集：caretRect 坐标系一有偏差，并集就被拖偏，
+                // 热区整体跑位 —— 这就是「要点好几次才点中」的主因。
                 if markLen > 0,
                    let p1 = tv.position(from: tv.beginningOfDocument, offset: markLoc + markLen),
                    let r = tv.textRange(from: p0, to: p1) {
                     let fr = tv.firstRect(for: r)
                     if fr.width > 0 || fr.height > 0 { rects.append(fr) }
+                }
+                if rects.isEmpty {
+                    var cr = tv.caretRect(for: p0)
+                    cr.origin.x -= tv.contentOffset.x
+                    cr.origin.y -= tv.contentOffset.y
+                    rects.append(cr)
                 }
             }
             guard !rects.isEmpty else { return nil }
@@ -1355,12 +1355,11 @@ struct NoteBodyEditor: UIViewRepresentable {
                     let markLoc = lr.location + info.loc
                     if let box = boxRect(tv: tv, markLoc: markLoc, markLen: info.markLen) {
                         // 热区：微信的做法是整条行首都算框的地盘 —— 左边盖住缩进/空白，
-                        // 右边盖住方框后面那格空隙，上下留一点余量。
-                        // 偏小的话手指稍偏就落在正文上变光标定位，只能重试。
-                        let hot = CGRect(x: box.minX - 34,
-                                         y: box.minY - 14,
-                                         width: box.width + 62,
-                                         height: box.height + 26)
+                        // 右边盖住方框后面那格空隙，上下留足余量。
+                        let hot = CGRect(x: box.minX - 44,
+                                         y: box.minY - 16,
+                                         width: box.width + 88,
+                                         height: box.height + 32)
                         if hot.contains(point) {
                             let dx = point.x - box.midX
                             let dy = point.y - box.midY
@@ -1374,8 +1373,8 @@ struct NoteBodyEditor: UIViewRepresentable {
                     // 兜底：让系统告诉我们这个点最近的字符位置（同样是系统算坐标，最稳）
                     if best == nil, let near = tv.closestPosition(to: point) {
                         let idx = tv.offset(from: tv.beginningOfDocument, to: near)
-                        // 方框本身 + 方框后面那个空格都算点在框上
-                        if idx >= markLoc && idx <= markLoc + info.markLen {
+                        // 方框本体 + 前后各一点余量（含后面的空格）都算点在框上
+                        if idx >= markLoc - 1 && idx <= markLoc + info.markLen + 2 {
                             best = (lr, markLoc, info.markLen, info.checked)
                         }
                     }
@@ -1458,7 +1457,7 @@ final class CheckboxAttachment: NSTextAttachment {
 
     init(checked: Bool) {
         super.init(data: nil, ofType: nil)
-        let side = 19 * FontScale.current
+        let side = 23 * FontScale.current
         // 垂直对齐：方块中心 ≈ 大写字母高度的中心，看着像长在文字上而不是悬着
         let cap = NoteBodyEditor.baseFont.capHeight
         bounds = CGRect(x: 0, y: -(side - cap) / 2, width: side, height: side)
@@ -1518,7 +1517,7 @@ final class CheckboxTextView: UITextView {
         // 只在「手指刚按下」这一个事件上判定，避免同一次触摸的移动/抬起重复触发
         if let event = event,
            event.allTouches?.contains(where: { $0.phase == .began }) == true,
-           CACurrentMediaTime() - lastToggleAt > 0.35,
+           CACurrentMediaTime() - lastToggleAt > 0.25,
            let cb = checkboxHitTest,
            cb(point) {
             lastToggleAt = CACurrentMediaTime()
