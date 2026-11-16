@@ -129,8 +129,6 @@ struct NotesView: View {
     @State private var showingAdd = false
     @State private var editing: NoteItem? = nil
     @State private var query = ""
-    /// 搜索条：平时收起，下拉列表才露出来
-    @StateObject private var pull = PullReveal()
 
     var body: some View {
         // 排序只算一次。原来 ForEach 里直接写 noteStore.sorted，
@@ -143,15 +141,7 @@ struct NotesView: View {
                 || n.body.localizedCaseInsensitiveContains(q)
         }
         return NavigationView {
-            VStack(spacing: 0) {
-                if pull.shown {
-                    PullSearchBar(query: $query, prompt: "搜索笔记",
-                                  onFocusChange: { f in pull.locked = f || !query.isEmpty },
-                                  onCancel: { pull.hide() })
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                Group {
+            Group {
                     if noteStore.notes.isEmpty {
                         emptyHint
                     } else {
@@ -164,7 +154,6 @@ struct NotesView: View {
                             }
                         }
                         .listStyle(.insetGrouped)
-                        .pullToRevealSearch()
                     }
                 }
                 .navigationTitle("笔记")
@@ -182,7 +171,6 @@ struct NotesView: View {
                     NoteEditorView(note: n)
                         .environmentObject(noteStore)
                 }
-            }
         }
         .navigationViewStyle(.stack)
     }
@@ -259,8 +247,6 @@ struct NotesView: View {
             }
             .tint(Palette.actionBlue)
         }
-        // 探针：接上所在列表的滚动视图，下拉到一定距离才把搜索条请出来
-        .background(ScrollProbe(reveal: pull))
     }
 
     /// 左滑按钮里的白色图标 + 圆形半透明底（与清单页同一规格）
@@ -478,7 +464,14 @@ struct NoteEditorView: View {
     private var formatBar: some View {
         HStack(spacing: 0) {
             barIcon("photo.on.rectangle") { photoSource = .library }
-            barIcon("arrow.uturn.backward") { bridge.undo() }
+            // 待办放第一位：微信收藏笔记里最常用的就是它
+            barIcon("checkmark.square") { bridge.toggleChecklist() }
+
+            barDivider
+
+            barIcon("list.bullet") { bridge.toggleLinePrefix("- ") }
+            barText("H") { bridge.toggleLinePrefix("# ") }
+            barText("B", active: activeTraits.contains("b")) { bridge.toggle("b") }
 
             barDivider
 
@@ -486,14 +479,8 @@ struct NoteEditorView: View {
             barText("T", active: showStylePanel) {
                 withAnimation(.easeInOut(duration: 0.16)) { showStylePanel.toggle() }
             }
-            barText("H") { bridge.toggleLinePrefix("# ") }
-            barText("B", active: activeTraits.contains("b")) { bridge.toggle("b") }
-
-            barDivider
-
-            barIcon("checkmark.square") { bridge.toggleChecklist() }
-            barIcon("list.bullet") { bridge.toggleLinePrefix("- ") }
-            barIcon("list.number") { bridge.renumberList() }
+            barIcon("arrow.uturn.backward") { bridge.undo() }
+            barIcon("arrow.uturn.forward") { bridge.redo() }
             moreMenu
         }
         .frame(height: 42)
@@ -671,13 +658,12 @@ struct NoteEditorView: View {
     /// 右端 ∨：其余全部功能收进菜单（滴答同款折叠）
     private var moreMenu: some View {
         Menu {
-            Button { bridge.redo() } label: { Label("重做", systemImage: "arrow.uturn.forward") }
-            Divider()
             Button { bridge.insert(fmt(Date(), "M月d日 HH:mm ")) } label: { Label("插入时间", systemImage: "clock") }
             Button { bridge.toggle("m") } label: { Label("代码", systemImage: "curlybraces") }
             Button { bridge.toggleLinePrefix("> ") } label: { Label("引用", systemImage: "text.quote") }
             Button { bridge.wrap("[", "](https://)") } label: { Label("链接", systemImage: "link") }
             Button { bridge.insert("\n———\n") } label: { Label("分割线", systemImage: "minus") }
+            Button { bridge.renumberList() } label: { Label("重新编号", systemImage: "list.number") }
             Divider()
             Button { bridge.indent(shift: 1) } label: { Label("增加缩进", systemImage: "increase.indent") }
             Button { bridge.indent(shift: -1) } label: { Label("减少缩进", systemImage: "decrease.indent") }
@@ -1045,47 +1031,63 @@ struct NoteBodyEditor: UIViewRepresentable {
     }
 
     /// 单行的行级样式：
-    /// 1. 行首勾选标记上盖一个画出来的方框（底下是系统字体一定有字形的 ⬜️/☑️，
+    /// 1. 行首勾选标记换成画的微信款方框（底下是系统一定有字形的 ☑/□，
     ///    万一附件没挂上，用户看到的也是一个方块字符，不会变成空白）
-    /// 2. 勾选完成的待办整句删除线变灰、# 标题加粗、> 引用变灰
+    /// 2. # 标题加粗、> 引用变灰
+    /// 3. 勾选组：勾选行 + 其后连续的从属行（待办下面那几行具体内容）。
+    ///    勾上 → 整组正文一起变灰（不打删除线）；取消 → 一起复原。
     ///
     /// `lineRange` / `line` 都是**相对于 `attr` 自身字符串**的位置 ——
     /// 整篇重建时 attr 就是整篇，局部重建时 attr 只是那几行，所以两种场景共用这一份实现。
+    /// `groupChecked` 由 applyLineAttributesAll 跨行维护：当前行是否处于已勾选的组里。
     private static func applyLineAttributes(_ attr: NSMutableAttributedString,
                                             lineRange lr: NSRange,
-                                            line: String) {
-        let ns = attr.string as NSString
+                                            line: String,
+                                            groupChecked: inout Bool?) {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        // 勾选框：字符本体 + 大字号，尺寸完全由字号控制（和正文差不多大）
+        // 勾选框：微信收藏笔记同款 —— 画出来的圆角方块（绿底白勾 / 灰描边），
+        // 用 NSTextAttachment 盖在 ☑ / □ 字符上。字符本体保留：
+        // 数据模型、列表摘要、复制全文、旧数据迁移都靠它，改观感不用动数据。
         let info = TextEditBridge.markInfo(in: line)
         if let info = info, info.markLen > 0,
            lr.location + info.loc + info.markLen <= attr.length {
-            let boxSize: CGFloat = info.checked ? 24 : 22
             attr.addAttributes([
-                .font: UIFont.app(boxSize),
-                .foregroundColor: info.checked
-                    ? UIColor.tertiaryLabel
-                    : UIColor.label.withAlphaComponent(0.78)
+                .font: UIFont.app(20),
+                .foregroundColor: UIColor.label
             ], range: NSRange(location: lr.location + info.loc, length: info.markLen))
+            attr.addAttribute(.attachment,
+                              value: CheckboxAttachment(checked: info.checked),
+                              range: NSRange(location: lr.location + info.loc, length: info.markLen))
         }
 
-        if let info = info, info.checked {
-            // 已勾选：只给勾选框后面的那段文字加删除线并置灰
-            var bodyLen = lr.length - info.len
-            // 行尾换行不计入
-            if bodyLen > 0, lr.location + info.len + bodyLen - 1 < ns.length,
-               ns.character(at: lr.location + info.len + bodyLen - 1) == 0x0A {
+        // 组状态推进：勾选行开组/更新组状态；从属行（无框正文行）继承上一行的组态；
+        // 空行 / 标题行结束当前组 —— 只有勾选行能开新组
+        if let info = info {
+            groupChecked = info.checked
+        } else if trimmed.isEmpty || trimmed.hasPrefix("# ") {
+            groupChecked = nil
+        }
+
+        let checkedNow = info?.checked ?? (groupChecked == true)
+        if checkedNow {
+            // 勾了：待办标题 + 具体内容整组一起变灰（不打删除线）。行尾换行符不上色。
+            let ns = attr.string as NSString
+            var bodyLen = lr.length
+            if bodyLen > 0, ns.character(at: lr.location + bodyLen - 1) == 0x0A {
                 bodyLen -= 1
+                if bodyLen > 0, ns.character(at: lr.location + bodyLen - 1) == 0x0D {
+                    bodyLen -= 1
+                }
             }
             if bodyLen > 0 {
-                attr.addAttributes([
-                    .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                    .strikethroughColor: UIColor.secondaryLabel,
-                    .foregroundColor: UIColor.secondaryLabel
-                ], range: NSRange(location: lr.location + info.len, length: bodyLen))
+                attr.addAttribute(.foregroundColor,
+                                  value: UIColor.secondaryLabel,
+                                  range: NSRange(location: lr.location, length: bodyLen))
             }
-        } else if info == nil, trimmed.hasPrefix("# ") {
+        }
+
+        if trimmed.hasPrefix("# ") {
             attr.addAttribute(
                 .font,
                 value: UIFont.app(19, weight: .semibold),
@@ -1122,16 +1124,49 @@ struct NoteBodyEditor: UIViewRepresentable {
         }
     }
 
-    /// 把一段文本按行跑一遍行级样式
-    private static func applyLineAttributesAll(_ attr: NSMutableAttributedString) {
+    /// 把一段文本按行跑一遍行级样式（跨行维护勾选组的勾选态）
+    private static func applyLineAttributesAll(_ attr: NSMutableAttributedString,
+                                               initialGroupChecked: Bool? = nil) {
         let cns = attr.string as NSString
         var loc = 0
+        var groupChecked = initialGroupChecked
         while loc < cns.length {
             let lr = cns.lineRange(for: NSRange(location: loc, length: 0))
-            applyLineAttributes(attr, lineRange: lr, line: cns.substring(with: lr))
+            applyLineAttributes(attr, lineRange: lr, line: cns.substring(with: lr),
+                                groupChecked: &groupChecked)
             if lr.length == 0 { break }
             loc = lr.location + lr.length
         }
+    }
+
+    /// 把行区间扩成完整的「勾选组」（只扩样式重算范围，不改文本）：
+    /// - 向前：range 落在某勾选组的从属行上时，把组头（勾选行）也拉进来，
+    ///   否则局部重排拿不到勾选态，变灰会丢；
+    /// - 向后：从组头往后连续的从属行（非空、无勾选框、非标题）并入，
+    ///   点勾选框切换时它们要跟着一起变灰 / 复原。
+    private static func expandGroupRange(_ cns: NSString, lineRange lr: NSRange) -> NSRange {
+        let isBody: (NSRange) -> Bool = { r in
+            let s = cns.substring(with: r)
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            return !t.isEmpty && TextEditBridge.markInfo(in: s) == nil && !t.hasPrefix("# ")
+        }
+        var start = lr.location
+        while start > 0 {
+            let prev = cns.lineRange(for: NSRange(location: start - 1, length: 0))
+            guard prev.length > 0 else { break }
+            let s = cns.substring(with: prev)
+            let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+            if t.isEmpty || t.hasPrefix("# ") { break }
+            start = prev.location
+            if TextEditBridge.markInfo(in: s) != nil { break }   // 摸到组头，收工
+        }
+        var end = lr.location + lr.length
+        while end < cns.length {
+            let next = cns.lineRange(for: NSRange(location: end, length: 0))
+            guard next.length > 0, isBody(next) else { break }
+            end = next.location + next.length
+        }
+        return NSRange(location: start, length: end - start)
     }
 
     /// 两段文本的差异范围（新串坐标系）。纯用于判断「该重上哪几行的样式」。
@@ -1205,8 +1240,11 @@ struct NoteBodyEditor: UIViewRepresentable {
         let safeLoc = max(0, min(range.location, total))
         let safeLen = max(0, min(range.length, total - safeLoc))
         let cns = storage.string as NSString
-        let lr = cns.lineRange(for: NSRange(location: safeLoc, length: safeLen))
+        var lr = cns.lineRange(for: NSRange(location: safeLoc, length: safeLen))
         guard lr.length > 0, lr.location + lr.length <= total else { return }
+        // 扩成完整的勾选组：点勾选框时从属行要跟着变灰/复原；
+        // 改从属行时要把组头勾选行拉进来，否则拿不到勾选态
+        lr = expandGroupRange(cns, lineRange: lr)
 
         let seg = cns.substring(with: lr)
         let sub = NSMutableAttributedString(string: seg, attributes: baseAttributes())
@@ -1316,12 +1354,13 @@ struct NoteBodyEditor: UIViewRepresentable {
                 if lr.length > 0, let info = TextEditBridge.markInfo(in: ns.substring(with: lr)) {
                     let markLoc = lr.location + info.loc
                     if let box = boxRect(tv: tv, markLoc: markLoc, markLen: info.markLen) {
-                        // 热区：左右各放宽一截（覆盖方框 + 后面的空格），上下也留余量。
+                        // 热区：微信的做法是整条行首都算框的地盘 —— 左边盖住缩进/空白，
+                        // 右边盖住方框后面那格空隙，上下留一点余量。
                         // 偏小的话手指稍偏就落在正文上变光标定位，只能重试。
-                        let hot = CGRect(x: box.minX - 26,
-                                         y: box.minY - 15,
-                                         width: box.width + 64,
-                                         height: box.height + 28)
+                        let hot = CGRect(x: box.minX - 34,
+                                         y: box.minY - 14,
+                                         width: box.width + 62,
+                                         height: box.height + 26)
                         if hot.contains(point) {
                             let dx = point.x - box.midX
                             let dy = point.y - box.midY
@@ -1406,6 +1445,59 @@ struct NoteBodyEditor: UIViewRepresentable {
             }
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             return true
+        }
+    }
+}
+
+// MARK: - 微信款勾选框（画出来的，不吃系统字形）
+
+/// 微信收藏笔记同款勾选框：绿底白勾 / 灰描边圆角方块。
+/// 数据模型仍是行首的 ☑ / □ 字符（迁移、列表摘要、复制全文都依赖它），
+/// 显示时用 NSTextAttachment 整个盖掉字符字形 —— 想改观感不用动数据。
+final class CheckboxAttachment: NSTextAttachment {
+
+    init(checked: Bool) {
+        super.init(data: nil, ofType: nil)
+        let side = 19 * FontScale.current
+        // 垂直对齐：方块中心 ≈ 大写字母高度的中心，看着像长在文字上而不是悬着
+        let cap = NoteBodyEditor.baseFont.capHeight
+        bounds = CGRect(x: 0, y: -(side - cap) / 2, width: side, height: side)
+        image = Self.draw(checked: checked, side: side)
+    }
+
+    required convenience init?(coder: NSCoder) {
+        self.init(checked: false)
+    }
+
+    /// 微信绿 #07C160；未勾 = 灰描边空心方块
+    private static let wechatGreen = UIColor(red: 0x07 / 255.0, green: 0xC1 / 255.0,
+                                             blue: 0x60 / 255.0, alpha: 1)
+    private static let borderGray = UIColor(red: 0.78, green: 0.78, blue: 0.80, alpha: 1)
+
+    private static func draw(checked: Bool, side: CGFloat) -> UIImage {
+        UIGraphicsImageRenderer(size: CGSize(width: side, height: side)).image { _ in
+            let inset = max(0.5, side * 0.04)
+            let rect = CGRect(x: inset, y: inset,
+                              width: side - inset * 2, height: side - inset * 2)
+            let path = UIBezierPath(roundedRect: rect, cornerRadius: side * 0.22)
+            if checked {
+                wechatGreen.setFill()
+                path.fill()
+                // 白色对勾（按方框比例起笔收笔，小尺寸也不断墨）
+                let c = UIBezierPath()
+                c.move(to: CGPoint(x: side * 0.24, y: side * 0.53))
+                c.addLine(to: CGPoint(x: side * 0.42, y: side * 0.72))
+                c.addLine(to: CGPoint(x: side * 0.77, y: side * 0.31))
+                c.lineWidth = max(1.8, side * 0.13)
+                c.lineCapStyle = .round
+                c.lineJoinStyle = .round
+                UIColor.white.setStroke()
+                c.stroke()
+            } else {
+                borderGray.setStroke()
+                path.lineWidth = 1.5
+                path.stroke()
+            }
         }
     }
 }
@@ -1827,7 +1919,7 @@ final class TextEditBridge {
     }
 
     /// 待办勾选开关：无勾选框 → 加未勾选方框；未勾选 → 已勾选；已勾选 → 取消。
-    /// 勾上后那一段文字自动加删除线并变灰，见 NoteBodyEditor.restyle
+    /// 勾上后标题行与其后的从属行（具体内容）整组一起变灰，见 NoteBodyEditor.applyLineAttributes
     func toggleChecklist() {
         guard let tv = textView else { return }
         syncPlain(tv)

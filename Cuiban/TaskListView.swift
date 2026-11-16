@@ -14,8 +14,6 @@ struct TaskListView: View {
     @State private var selecting = false
     @State private var selected: Set<String> = []
     @State private var confirmBatchDelete = false
-    /// 搜索条：平时收起，下拉列表才露出来（系统 .searchable 在顶部是常驻的，做不到）
-    @StateObject private var pull = PullReveal()
 
     /// 搜索过滤：标题或备注命中都算；空白搜索词直接放行
     private func match(_ t: TaskItem) -> Bool {
@@ -35,15 +33,7 @@ struct TaskListView: View {
         let finished = store.finished.filter(match)
 
         return NavigationView {
-            VStack(spacing: 0) {
-                if pull.shown {
-                    PullSearchBar(query: $query, prompt: "搜索标题 / 备注",
-                                  onFocusChange: { f in pull.locked = f || !query.isEmpty },
-                                  onCancel: { pull.hide() })
-                        .transition(.move(edge: .top).combined(with: .opacity))
-                }
-
-                List {
+            List {
                     if !overdue.isEmpty {
                         Section {
                             ForEach(overdue) { t in
@@ -97,7 +87,6 @@ struct TaskListView: View {
                     }
                 }
                 .listStyle(.insetGrouped)
-                .pullToRevealSearch()
                 .navigationTitle("催办清单")
                 // 和日历页一致：标题顶格居中显示（inline 模式下 navigationTitle 默认居中）
                 .navigationBarTitleDisplayMode(.inline)
@@ -172,7 +161,6 @@ struct TaskListView: View {
                 .sheet(item: $detail) { t in
                     TaskDetailView(task: t)
                 }
-            }
         }
         .navigationViewStyle(.stack)
     }
@@ -190,7 +178,6 @@ struct TaskListView: View {
         .frame(maxWidth: .infinity)
         .padding(.vertical, 30)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(ScrollProbe(reveal: pull))
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
     }
@@ -377,8 +364,6 @@ struct TaskListView: View {
             .tint(Palette.actionBlue)
             }
         }
-        // 探针：把所在列表的滚动视图接上，用来算「下拉了多少」（只读 offset，不抢手势）
-        .background(ScrollProbe(reveal: pull))
     }
 
     /// 左滑按钮里的图标。底色交给系统按 .tint 上色，
